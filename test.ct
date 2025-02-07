@@ -1,0 +1,2 @@
+import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* ) ;
+import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* from source:($[name])): ;
