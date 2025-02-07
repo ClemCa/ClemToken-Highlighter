@@ -2,6 +2,7 @@
   "name": "clemtoken-highlighter",
   "displayName": "ClemToken Highlighter",
   "description": "",
+  "publisher": "ClemCa",
   "repository": {
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
@@ -13,30 +14,71 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:clemtoken"
+  ],
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [{
-      "id": "clemtoken",
-      "extensions": [".ct"],
-      "aliases": ["ClemToken", "clemtoken"]
-    }]
+    "languages": [
+      {
+        "id": "clemtoken",
+        "extensions": [
+          ".ct"
+        ],
+        "aliases": [
+          "ClemToken",
+          "clemtoken"
+        ]
+      }
+    ],
+    "configurationDefaults": {
+      "[clemtoken]": {
+        "editor.language.brackets": [
+          ["$[", "]"],
+          ["(", ")"]
+        ],
+        "editor.language.colorizedBracketPairs": [
+          ["(",")"]
+        ]
+      }
+    }
+  },
+  "configuration": {
+    "title": "ClemToken Highlighter",
+    "properties": {
+      "clemtoken.selectorColor": {
+        "type": "string",
+        "default": "#4EC9B0",
+        "description": "Selector color"
+      },
+      "clemtoken.keywordColor": {
+        "type": "string",
+        "default": "#569CD6",
+        "description": "Keyword color"
+      },
+      "clemtoken.nameColor": {
+        "type": "string",
+        "default": "#808080",
+        "description": "Group name color"
+      },
+      "clemtoken.affixColor": {
+        "type": "string",
+        "default": "#FF69B4",
+        "description": "Affix color"
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
     "test": "vscode-test"
   },
   "devDependencies": {
     "@types/vscode": "^1.97.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
-    "@typescript-eslint/eslint-plugin": "^8.22.0",
-    "@typescript-eslint/parser": "^8.22.0",
-    "eslint": "^9.19.0",
     "typescript": "^5.7.3",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1"
