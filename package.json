@@ -1,15 +1,15 @@
 {
   "name": "clemtoken-highlighter",
   "displayName": "ClemToken Highlighter",
-  "description": "",
+  "description": "Syntax higlighting for the unreleased ClemToken grammar DSL",
   "publisher": "ClemCa",
   "repository": {
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "0.0.1",
+  "version": "1.0.0",
   "engines": {
-    "vscode": "^1.97.0"
+    "vscode": "^1.103.0"
   },
   "categories": [
     "Other"
@@ -34,11 +34,20 @@
     "configurationDefaults": {
       "[clemtoken]": {
         "editor.language.brackets": [
-          ["$[", "]"],
-          ["(", ")"]
+          [
+            "$[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
         ],
         "editor.language.colorizedBracketPairs": [
-          ["(",")"]
+          [
+            "(",
+            ")"
+          ]
         ]
       }
     }
@@ -69,18 +78,21 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "test": "vscode-test"
+    "compile": "npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "vscode:prepublish": "npm run package",
+    "package": "npm run check-types && node esbuild.js --production"
   },
   "devDependencies": {
-    "@types/vscode": "^1.97.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
-    "typescript": "^5.7.3",
-    "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@types/vscode": "1.103.0",
+    "@vscode/test-cli": "0.0.11",
+    "@vscode/test-electron": "2.5.2",
+    "esbuild": "^0.25.9",
+    "typescript": "5.9.2"
   }
 }
