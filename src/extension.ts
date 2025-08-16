@@ -159,7 +159,7 @@ export function activate(context: vscode.ExtensionContext) {
 		const anbDecorations = [] as vscode.DecorationOptions[];
 		const optDecorations = [] as vscode.DecorationOptions[];
 		const text = activeEditor.document.getText().split(/\r?\n/);
-		const groupRegex = /^(?:(?<prefix>[^\(\):\+\*\-\s]+:_?|_)(?<token>\((?:[^:\+\*\-()]|(?<subgroup>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<suffix>\+|\*|\d+(?:-\d+)?|_|:)?|(?<token_suff>\((?:[^:\+\*\-()]|(?<subgroup_suff>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<solo_suffix>\+|\*|\d+(?:-\d+)?|_|:))/;
+		const groupRegex = /^^(?:(?<prefix>[^\(\):\+\*\-\s]+:_?|_)(?<token>\((?:[^:\+\*\-()]|(?<subgroup>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\):?(?:\+|\*|\d+(?:-\d+)?|_)?))*\))(?<suffix>:?(?:\+|\*|\d+(?:-\d+)?|_))?|(?<token_suff>\((?:[^:\+\*\-()]|(?<subgroup_suff>:?(?:[^\(\):\+\*\-]+_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<solo_suffix>:?(?:\+|\*|\d+(?:-\d+)?|_|:)))/;
 		createdAnchors.length = 0;
 		uncreatedAnchors.length = 0;
 		references.length = 0;
