@@ -2,3 +2,25 @@ import $[name] _(. $[name])* from $[name] ;
 import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* ) ;
 import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* from source:($[name])): ;
 
+# MAIN
+import @identifier (. @identifier)* from @identifier ;
+@declaration: [var | @type] @identifier = @expression ;
+
+
+## SUB
+@expression: [@literal | @identifier | @call]
+
+
+## VALUES
+
+@literal: [@string | @number | @boolean]
+@string: " content:(_($[name])*) "
+
+### NUMBERS
+@number: [@integer | @float]
+@integer: _($[digit])+
+@float: @integer . @integer
+
+
+# BASIC
+@identifier: $[name]
