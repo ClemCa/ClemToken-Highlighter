@@ -1,6 +1,156 @@
 import * as vscode from 'vscode';
 
 export function activate(context: vscode.ExtensionContext) {
+	activateGrammar(context);
+	activateAbstract(context);
+}
+
+function activateAbstract(context: vscode.ExtensionContext) {
+	const abstractFieldColor = vscode.workspace.getConfiguration('clemtoken-abstract').get('fieldColor', '#4a9d4cff');
+	const abstractColonColor = vscode.workspace.getConfiguration('clemtoken-abstract').get('colonColor', '#4EC9B0');
+	const abstractStringColor = vscode.workspace.getConfiguration('clemtoken-abstract').get('stringColor', '#CE9178');
+	const abstractFieldDecorationType = vscode.window.createTextEditorDecorationType({
+		color: abstractFieldColor
+	});
+	const abstractColonDecorationType = vscode.window.createTextEditorDecorationType({
+		color: abstractColonColor
+	});
+	const abstractStringDecorationType = vscode.window.createTextEditorDecorationType({
+		color: abstractStringColor
+	});
+	const fields = [] as { line: number, column: number, size: number, name: string }[];
+	const strings = [] as { line: number, column: number, size: number, name: string }[];
+	let activeEditor = vscode.window.activeTextEditor;
+	vscode.window.onDidChangeActiveTextEditor(editor => {
+		activeEditor = editor;
+		if (editor) {
+			updateDecorations();
+		}
+	}, null, context.subscriptions);
+	vscode.workspace.onDidChangeTextDocument(event => {
+		if (event.document.languageId) return;
+		if (activeEditor && event.document === activeEditor.document) {
+			updateDecorations();
+		}
+	}, null, context.subscriptions);
+	vscode.workspace.onDidChangeConfiguration(event => {
+		if (!activeEditor) return;
+		updateDecorations();
+	}, null, context.subscriptions);
+	vscode.languages.onDidChangeDiagnostics(event => {
+		if (activeEditor && event.uris.includes(activeEditor.document.uri)) {
+			updateDecorations();
+		}
+	}, null, context.subscriptions);
+	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider("clemtoken-abstract", {
+		provideDocumentSymbols(document, token) {
+			return [...fields.map(field => {
+				return new vscode.DocumentSymbol(
+					field.name,
+					'Field',
+					vscode.SymbolKind.Key,
+					new vscode.Range(field.line, field.column, field.line, field.column + field.size),
+					new vscode.Range(field.line, field.column, field.line, field.column + field.size)
+				);
+			}), ...strings.map(str => {
+				return new vscode.DocumentSymbol(
+					str.name,
+					'String',
+					vscode.SymbolKind.String,
+					new vscode.Range(str.line, str.column, str.line, str.column + str.size),
+					new vscode.Range(str.line, str.column, str.line, str.column + str.size)
+				);
+			})];
+		}
+	});
+	const foldingRangeProvider = vscode.languages.registerFoldingRangeProvider("clemtoken-abstract", {
+		provideFoldingRanges(document, context, token) {
+			function GetFoldingRanges(line: number, depth: number): [vscode.FoldingRange[], number] {
+				if(line > document.lineCount) return [[], line];
+				const text = document.lineAt(line).text;
+				if(text.trimStart().startsWith(')')) {
+					return [[], line];
+				}
+				const ranges = [] as vscode.FoldingRange[];
+				if(text.trimStart().startsWith('(')) {
+					let [_, l] = GetFoldingRanges(line+1, depth + 1);
+					ranges.push(new vscode.FoldingRange(line, l));
+					line = l;
+				}
+				let [nextRanges, nextLine] = GetFoldingRanges(line+1, depth);
+				ranges.push(...nextRanges);
+				return [ranges, nextLine];
+			}
+			const [finalRanges, _] = GetFoldingRanges(0, 0);
+			return finalRanges;
+		}
+	});
+	context.subscriptions.push(documentSymbolProvider, foldingRangeProvider);
+	function updateDecorations() {
+		if (!activeEditor) return;
+		const lang = activeEditor.document.languageId;
+		if (lang !== "clemtoken-abstract") return;
+		const fdecorations = [] as vscode.DecorationOptions[];
+		const cDecorations = [] as vscode.DecorationOptions[];
+		const sDecorations = [] as vscode.DecorationOptions[];
+		const text = activeEditor.document.getText().split(/\r?\n/);
+		for (let i = 0; i < text.length; i++) {
+			if (text[i].trim() === "") continue;
+			abstractDecorationsFromLine(activeEditor.document, text[i], i, fdecorations, cDecorations, sDecorations, fields, strings);
+		}
+		activeEditor.setDecorations(abstractFieldDecorationType, fdecorations);
+		activeEditor.setDecorations(abstractColonDecorationType, cDecorations);
+		activeEditor.setDecorations(abstractStringDecorationType, sDecorations);
+	}
+}
+
+function abstractDecorationsFromLine(document: vscode.TextDocument, line: string, lineNumber: number,
+	fdecorations: vscode.DecorationOptions[],
+	cDecorations: vscode.DecorationOptions[],
+	sDecorations: vscode.DecorationOptions[],
+	fields: { line: number, column: number, size: number, name: string }[],
+	strings: { line: number, column: number, size: number, name: string }[]) {
+		if(line.trimStart().startsWith('(')) return;
+		let whitespaceAmount = line.length - line.trimStart().length; // not efficient but I'll prioritize readability for this one
+		var word = document.getWordRangeAtPosition(new vscode.Position(lineNumber, whitespaceAmount), /\w+:/);
+		if (word) {
+			const fieldName = line.substring(word.start.character, word.end.character - 1);
+			const fieldValue = line.substring(word.end.character + 1).trim();
+			fdecorations.push({
+				range: new vscode.Range(
+					lineNumber, word.start.character,
+					lineNumber, word.end.character - 1
+				),
+				hoverMessage: fieldValue
+			});
+			cDecorations.push({
+				range: new vscode.Range(
+					lineNumber, word.end.character - 1,
+					lineNumber, word.end.character
+				),
+			});
+			sDecorations.push({
+				range: new vscode.Range(
+					lineNumber, word.end.character + 1,
+					lineNumber, word.end.character + 1 + fieldValue.length
+				),
+			});
+			fields.push({
+				line: lineNumber,
+				column: word.start.character,
+				size: word.end.character - word.start.character - 1,
+				name: fieldName
+			});
+			strings.push({
+				line: lineNumber,
+				column: word.end.character + 2,
+				size: fieldValue.length,
+				name: fieldValue
+			});
+		}
+}
+
+function activateGrammar(context: vscode.ExtensionContext) {
 	const keywordColor = vscode.workspace.getConfiguration('clemtoken').get('keywordColor', '#4a9d4cff');
 	const selectorColor = vscode.workspace.getConfiguration('clemtoken').get('selectorColor', '#4EC9B0');
 	const nameColor = vscode.workspace.getConfiguration('clemtoken').get('nameColor', '#808080');
@@ -51,13 +201,14 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeConfiguration(event => {
+		if (!activeEditor) return;
 		updateDecorations();
 	}, null, context.subscriptions);
 	vscode.languages.onDidChangeDiagnostics(event => {
 		if (activeEditor && event.uris.includes(activeEditor.document.uri)) {
 			updateDecorations();
 		}
-	});
+	}, null, context.subscriptions);
 	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider({ language: 'clemtoken' }, {
 		provideDocumentSymbols(document, token) {
 			var result = [...createdAnchors.map(anchor => {
@@ -87,7 +238,7 @@ export function activate(context: vscode.ExtensionContext) {
 			}) ?? createdAnchors.find(anchor => {
 				return anchor.line === position.line && position.character >= anchor.column && position.character < anchor.column + anchor.size;
 			});
-			if(!reference) return null;
+			if (!reference) return null;
 			return references.filter(ref => ref.name === reference?.name).map(ref => {
 				return new vscode.Location(
 					document.uri,
@@ -101,7 +252,7 @@ export function activate(context: vscode.ExtensionContext) {
 			const reference = references.find(ref => {
 				return ref.line === position.line && position.character >= ref.column && position.character < ref.column + ref.size;
 			});
-			if(!reference) return null;
+			if (!reference) return null;
 			for (const anchor of createdAnchors) {
 				if (anchor.name === reference.name) {
 					return new vscode.Location(
@@ -116,13 +267,13 @@ export function activate(context: vscode.ExtensionContext) {
 	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
 		provideCompletionItems(document, position, token) {
 			const word = document.getWordRangeAtPosition(position, /\@|(?:\$\[?)\w*/);
-			if(!word) return [];
+			if (!word) return [];
 			const text = document.getText(word);
 			if (!text) return [];
-			if(text.startsWith("@")) {
-				if(word.start.character === 0) {
+			if (text.startsWith("@")) {
+				if (word.start.character === 0) {
 					return uncreatedAnchors.map(anchor => {
-						const item = new vscode.CompletionItem(anchor.name+":", vscode.CompletionItemKind.Function);
+						const item = new vscode.CompletionItem(anchor.name + ":", vscode.CompletionItemKind.Function);
 						item.range = new vscode.Range(word.start, word.end);
 						return item;
 					});
@@ -132,7 +283,7 @@ export function activate(context: vscode.ExtensionContext) {
 					item.range = new vscode.Range(word.start, word.end);
 					return item;
 				});
-			} else if(text.startsWith("$")) {
+			} else if (text.startsWith("$")) {
 				return [
 					"$[name]",
 					"$[digit]"
@@ -229,7 +380,7 @@ function decorationsFromLine(
 				const closingOpt = lineText.substring(i).indexOf("]");
 				const initialLength = accumulator.length;
 				if (closingOpt != -1) {
-					if(accumulator[1] == "@") {
+					if (accumulator[1] == "@") {
 						uncreatedAnchors.push({
 							line: lineNumber,
 							column: offset + i - accumulator.length + 1,

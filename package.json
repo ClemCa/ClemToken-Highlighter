@@ -7,7 +7,7 @@
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.1.1",
+  "version": "1.2.0",
   "engines": {
     "vscode": "^1.103.0"
   },
@@ -34,6 +34,16 @@
           "ClemToken",
           "clemtoken"
         ]
+      },
+      {
+        "id": "clemtoken-abstract",
+        "extensions": [
+          ".cta"
+        ],
+        "aliases": [
+          "ClemToken Abstract",
+          "clemtoken-abstract"
+        ]
       }
     ],
     "configurationDefaults": {
@@ -50,6 +60,20 @@
           [
             "[",
             "]"
+          ]
+        ],
+        "editor.language.colorizedBracketPairs": [
+          [
+            "(",
+            ")"
+          ]
+        ]
+      },
+      "[clemtoken-abstract]": {
+        "editor.language.brackets": [
+          [
+            "(",
+            ")"
           ]
         ],
         "editor.language.colorizedBracketPairs": [
@@ -103,6 +127,21 @@
         "type": "string",
         "default": "#FFB6C1",
         "description": "Optional color"
+      },
+      "clemtoken-abstract.fieldColor": {
+        "type": "string",
+        "default": "#4a9d4cff",
+        "description": "Field color"
+      },
+      "clemtoken-abstract.colonColor": {
+        "type": "string",
+        "default": "#4EC9B0",
+        "description": "Colon color"
+      },
+      "clemtoken-abstract.stringColor": {
+        "type": "string",
+        "default": "#CE9178",
+        "description": "String color"
       }
     }
   },
