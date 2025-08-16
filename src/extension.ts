@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
 
 export function activate(context: vscode.ExtensionContext) {
-	const keywordColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('keywordColor', '#4a9d4cff');
-	const selectorColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('selectorColor', '#4EC9B0');
-	const nameColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('nameColor', '#808080');
-	const affixColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('affixColor', '#FF69B4');
-	const titleColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('titleColor', '#02adf6ff');
-	const anchorColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('anchorColor', '#569CD6');
-	const anchorBaseColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('anchorBaseColor', '#8eb5d4ff');
-	const optionalColor = vscode.workspace.getConfiguration('clemTokenHighlighter').get('optionalColor', '#FFB6C1');
+	const keywordColor = vscode.workspace.getConfiguration('clemtoken').get('keywordColor', '#4a9d4cff');
+	const selectorColor = vscode.workspace.getConfiguration('clemtoken').get('selectorColor', '#4EC9B0');
+	const nameColor = vscode.workspace.getConfiguration('clemtoken').get('nameColor', '#808080');
+	const affixColor = vscode.workspace.getConfiguration('clemtoken').get('affixColor', '#FF69B4');
+	const titleColor = vscode.workspace.getConfiguration('clemtoken').get('titleColor', '#02adf6ff');
+	const anchorColor = vscode.workspace.getConfiguration('clemtoken').get('anchorColor', '#569CD6');
+	const anchorBaseColor = vscode.workspace.getConfiguration('clemtoken').get('anchorBaseColor', '#8eb5d4ff');
+	const optionalColor = vscode.workspace.getConfiguration('clemtoken').get('optionalColor', '#FFB6C1');
 
 	const titleDecorationType = vscode.window.createTextEditorDecorationType({
 		color: titleColor
@@ -35,6 +35,9 @@ export function activate(context: vscode.ExtensionContext) {
 	const optionalDecorationType = vscode.window.createTextEditorDecorationType({
 		color: optionalColor
 	});
+	const uncreatedAnchors = [] as { line: number, column: number, size: number, name: string }[];
+	const createdAnchors = [] as { line: number, column: number, size: number, name: string }[];
+	const references = [] as { line: number, column: number, size: number, name: string }[];
 	let activeEditor = vscode.window.activeTextEditor;
 	vscode.window.onDidChangeActiveTextEditor(editor => {
 		activeEditor = editor;
@@ -55,6 +58,63 @@ export function activate(context: vscode.ExtensionContext) {
 			updateDecorations();
 		}
 	});
+	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider({ language: 'clemtoken' }, {
+		provideDocumentSymbols(document, token) {
+			console.log("providing document symbols");
+			var result = [...createdAnchors.map(anchor => {
+				return new vscode.DocumentSymbol(
+					anchor.name,
+					'',
+					vscode.SymbolKind.Function,
+					new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size),
+					new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size)
+				);
+			}), ...references.map(ref => {
+				return new vscode.DocumentSymbol(
+					ref.name,
+					'',
+					vscode.SymbolKind.Function,
+					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size),
+					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size)
+				);
+			})];
+			return result;
+		}
+	});
+	const refProvider = vscode.languages.registerReferenceProvider({ language: 'clemtoken' }, {
+		provideReferences(document, position, context, token) {
+			var reference = references.find(ref => {
+				return ref.line === position.line && position.character >= ref.column && position.character < ref.column + ref.size;
+			}) ?? createdAnchors.find(anchor => {
+				return anchor.line === position.line && position.character >= anchor.column && position.character < anchor.column + anchor.size;
+			});
+			if(!reference) return null;
+			return references.filter(ref => ref.name === reference?.name).map(ref => {
+				return new vscode.Location(
+					document.uri,
+					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size)
+				);
+			});
+		}
+	});
+	const dProvider = vscode.languages.registerDefinitionProvider({ language: 'clemtoken' }, {
+		provideDefinition(document, position, token) {
+			const reference = references.find(ref => {
+				return ref.line === position.line && position.character >= ref.column && position.character < ref.column + ref.size;
+			});
+			if(!reference) return null;
+			for (const anchor of createdAnchors) {
+				if (anchor.name === reference.name) {
+					return new vscode.Location(
+						document.uri,
+						new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size)
+					);
+				}
+			}
+			return null;
+		}
+	});
+	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider);
 	function updateDecorations() {
 		if (!activeEditor) return;
 		const lang = activeEditor.document.languageId;
@@ -69,6 +129,9 @@ export function activate(context: vscode.ExtensionContext) {
 		const optDecorations = [] as vscode.DecorationOptions[];
 		const text = activeEditor.document.getText().split(/\r?\n/);
 		const groupRegex = /^(?:(?<prefix>[^\(\):\+\*\-\s]+:_?|_)(?<token>\((?:[^:\+\*\-()]|(?<subgroup>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<suffix>\+|\*|\d+(?:-\d+)?|_|:)?|(?<token_suff>\((?:[^:\+\*\-()]|(?<subgroup_suff>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<solo_suffix>\+|\*|\d+(?:-\d+)?|_|:))/;
+		createdAnchors.length = 0;
+		uncreatedAnchors.length = 0;
+		references.length = 0;
 		for (let i = 0; i < text.length; i++) {
 			if (text[i].trim() === "") continue;
 			if (text[i][0] === "#") {
@@ -77,7 +140,8 @@ export function activate(context: vscode.ExtensionContext) {
 				});
 				continue;
 			}
-			decorationsFromLine(text[i], i, groupRegex, decorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations);
+			decorationsFromLine(text[i], i, groupRegex, decorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations,
+				createdAnchors, uncreatedAnchors, references);
 		}
 		activeEditor.setDecorations(optionalDecorationType, optDecorations);
 		activeEditor.setDecorations(anchorBaseDecorationType, anbDecorations);
@@ -87,6 +151,18 @@ export function activate(context: vscode.ExtensionContext) {
 		activeEditor.setDecorations(selectorDecorationType, sDecorations); // not used in V2
 		activeEditor.setDecorations(nameDecorationType, nDecorations);
 		activeEditor.setDecorations(affixDecorationType, aDecorations);
+		for (let i = uncreatedAnchors.length - 1; i >= 0; i--) {
+			let found = false;
+			for (let j = 0; j < createdAnchors.length; j++) {
+				if (createdAnchors[j].name == uncreatedAnchors[i].name) {
+					found = true;
+					break;
+				}
+			}
+			if (found) {
+				references.push(...uncreatedAnchors.splice(i, 1));
+			}
+		}
 	}
 }
 function decorationsFromLine(
@@ -100,6 +176,9 @@ function decorationsFromLine(
 	anDecorations: vscode.DecorationOptions[], // anchor decorations
 	anbDecorations: vscode.DecorationOptions[], // anchor base decorations
 	optDecorations: vscode.DecorationOptions[], // optional decorations
+	createdAnchors: { line: number, column: number, size: number, name: string }[],
+	uncreatedAnchors: { line: number, column: number, size: number, name: string }[],
+	references: { line: number, column: number, size: number, name: string }[],
 	offset: number = 0
 ) {
 	for (let i = 0; i < lineText.length; i++) {
@@ -119,6 +198,26 @@ function decorationsFromLine(
 				const closingOpt = lineText.substring(i).indexOf("]");
 				const initialLength = accumulator.length;
 				if (closingOpt != -1) {
+					if(accumulator[1] == "@") {
+						uncreatedAnchors.push({
+							line: lineNumber,
+							column: offset + i - accumulator.length + 1,
+							size: accumulator.length - 1,
+							name: accumulator.slice(1)
+						});
+						anbDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - accumulator.length + 1,
+								lineNumber, offset + i - accumulator.length + 2
+							)
+						});
+						anDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - accumulator.length + 2,
+								lineNumber, offset + i
+							)
+						});
+					}
 					accumulator += lineText.substring(i, i + closingOpt + 1);
 					optDecorations.push({ // [
 						range: new vscode.Range(
@@ -158,7 +257,31 @@ function decorationsFromLine(
 				});
 			}
 			if (accumulator.startsWith("@")) {
-				const cutShort = [":", "]"].includes(accumulator[accumulator.length - 1])
+				let cutShort = false;
+				if (accumulator[accumulator.length - 1] === ":") {
+					cutShort = true;
+					createdAnchors.push({
+						line: lineNumber,
+						column: offset + i - accumulator.length + 1,
+						size: accumulator.length - 1,
+						name: accumulator.slice(0, -1)
+					});
+				} else if (accumulator[accumulator.length - 1] === "]") {
+					cutShort = true;
+					uncreatedAnchors.push({
+						line: lineNumber,
+						column: offset + i - accumulator.length + 1,
+						size: accumulator.length - 1,
+						name: accumulator.slice(0, -1)
+					});
+				} else {
+					uncreatedAnchors.push({
+						line: lineNumber,
+						column: offset + i - accumulator.length,
+						size: accumulator.length,
+						name: accumulator
+					});
+				}
 				anbDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + i - accumulator.length,
@@ -216,7 +339,7 @@ function decorationsFromLine(
 		i = postFix;
 		const subStart = prefixRange.end.character - offset + 1;
 		const subline = lineText.substring(subStart, end);
-		decorationsFromLine(subline, lineNumber, groupRegex, wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations, subStart + offset);
+		decorationsFromLine(subline, lineNumber, groupRegex, wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations, createdAnchors, uncreatedAnchors, references, subStart + offset);
 	}
 }
 

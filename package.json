@@ -7,7 +7,7 @@
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.0.0",
+  "version": "1.1.0",
   "engines": {
     "vscode": "^1.103.0"
   },
@@ -17,7 +17,12 @@
   "activationEvents": [
     "onLanguage:clemtoken"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "documentSymbolProvider": "true",
+    "definitionProvider": "true",
+    "referencesProvider": "true"
+  },
   "contributes": {
     "languages": [
       {
@@ -41,6 +46,10 @@
           [
             "(",
             ")"
+          ],
+          [
+            "[",
+            "]"
           ]
         ],
         "editor.language.colorizedBracketPairs": [
@@ -62,7 +71,7 @@
       },
       "clemtoken.keywordColor": {
         "type": "string",
-        "default": "#569CD6",
+        "default": "#4EC9B0",
         "description": "Keyword color"
       },
       "clemtoken.nameColor": {
@@ -74,6 +83,26 @@
         "type": "string",
         "default": "#FF69B4",
         "description": "Affix color"
+      },
+      "clemtoken.titleColor": {
+        "type": "string",
+        "default": "#02ADF6",
+        "description": "Title color"
+      },
+      "clemtoken.anchorColor": {
+        "type": "string",
+        "default": "#569CD6",
+        "description": "Anchor color"
+      },
+      "clemtoken.anchorBaseColor": {
+        "type": "string",
+        "default": "#8EB5D4",
+        "description": "Anchor base color"
+      },
+      "clemtoken.optionalColor": {
+        "type": "string",
+        "default": "#FFB6C1",
+        "description": "Optional color"
       }
     }
   },
