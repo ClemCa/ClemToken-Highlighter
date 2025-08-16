@@ -60,7 +60,6 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider({ language: 'clemtoken' }, {
 		provideDocumentSymbols(document, token) {
-			console.log("providing document symbols");
 			var result = [...createdAnchors.map(anchor => {
 				return new vscode.DocumentSymbol(
 					anchor.name,
@@ -114,7 +113,39 @@ export function activate(context: vscode.ExtensionContext) {
 			return null;
 		}
 	});
-	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider);
+	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
+		provideCompletionItems(document, position, token) {
+			const word = document.getWordRangeAtPosition(position, /\@|(?:\$\[?)\w*/);
+			if(!word) return [];
+			const text = document.getText(word);
+			if (!text) return [];
+			if(text.startsWith("@")) {
+				if(word.start.character === 0) {
+					return uncreatedAnchors.map(anchor => {
+						const item = new vscode.CompletionItem(anchor.name+":", vscode.CompletionItemKind.Function);
+						item.range = new vscode.Range(word.start, word.end);
+						return item;
+					});
+				}
+				return createdAnchors.map(anchor => {
+					const item = new vscode.CompletionItem(anchor.name, vscode.CompletionItemKind.Function);
+					item.range = new vscode.Range(word.start, word.end);
+					return item;
+				});
+			} else if(text.startsWith("$")) {
+				return [
+					"$[name]",
+					"$[digit]"
+				].map(item => {
+					const i = new vscode.CompletionItem(item, vscode.CompletionItemKind.Function);
+					i.range = new vscode.Range(word.start, word.end);
+					return i;
+				});
+			}
+			return [];
+		}
+	}, '@', '$');
+	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider, cProvider);
 	function updateDecorations() {
 		if (!activeEditor) return;
 		const lang = activeEditor.document.languageId;
