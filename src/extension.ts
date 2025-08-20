@@ -66,18 +66,18 @@ function activateAbstract(context: vscode.ExtensionContext) {
 	const foldingRangeProvider = vscode.languages.registerFoldingRangeProvider("clemtoken-abstract", {
 		provideFoldingRanges(document, context, token) {
 			function GetFoldingRanges(line: number, depth: number): [vscode.FoldingRange[], number] {
-				if(line > document.lineCount) return [[], line];
+				if (line > document.lineCount) return [[], line];
 				const text = document.lineAt(line).text;
-				if(text.trimStart().startsWith(')')) {
+				if (text.trimStart().startsWith(')')) {
 					return [[], line];
 				}
 				const ranges = [] as vscode.FoldingRange[];
-				if(text.trimStart().startsWith('(')) {
-					let [_, l] = GetFoldingRanges(line+1, depth + 1);
+				if (text.trimStart().startsWith('(')) {
+					let [_, l] = GetFoldingRanges(line + 1, depth + 1);
 					ranges.push(new vscode.FoldingRange(line, l));
 					line = l;
 				}
-				let [nextRanges, nextLine] = GetFoldingRanges(line+1, depth);
+				let [nextRanges, nextLine] = GetFoldingRanges(line + 1, depth);
 				ranges.push(...nextRanges);
 				return [ranges, nextLine];
 			}
@@ -110,44 +110,44 @@ function abstractDecorationsFromLine(document: vscode.TextDocument, line: string
 	sDecorations: vscode.DecorationOptions[],
 	fields: { line: number, column: number, size: number, name: string }[],
 	strings: { line: number, column: number, size: number, name: string }[]) {
-		if(line.trimStart().startsWith('(')) return;
-		let whitespaceAmount = line.length - line.trimStart().length; // not efficient but I'll prioritize readability for this one
-		var word = document.getWordRangeAtPosition(new vscode.Position(lineNumber, whitespaceAmount), /\w+:/);
-		if (word) {
-			const fieldName = line.substring(word.start.character, word.end.character - 1);
-			const fieldValue = line.substring(word.end.character + 1).trim();
-			fdecorations.push({
-				range: new vscode.Range(
-					lineNumber, word.start.character,
-					lineNumber, word.end.character - 1
-				),
-				hoverMessage: fieldValue
-			});
-			cDecorations.push({
-				range: new vscode.Range(
-					lineNumber, word.end.character - 1,
-					lineNumber, word.end.character
-				),
-			});
-			sDecorations.push({
-				range: new vscode.Range(
-					lineNumber, word.end.character + 1,
-					lineNumber, word.end.character + 1 + fieldValue.length
-				),
-			});
-			fields.push({
-				line: lineNumber,
-				column: word.start.character,
-				size: word.end.character - word.start.character - 1,
-				name: fieldName
-			});
-			strings.push({
-				line: lineNumber,
-				column: word.end.character + 2,
-				size: fieldValue.length,
-				name: fieldValue
-			});
-		}
+	if (line.trimStart().startsWith('(')) return;
+	let whitespaceAmount = line.length - line.trimStart().length; // not efficient but I'll prioritize readability for this one
+	var word = document.getWordRangeAtPosition(new vscode.Position(lineNumber, whitespaceAmount), /\w+:/);
+	if (word) {
+		const fieldName = line.substring(word.start.character, word.end.character - 1);
+		const fieldValue = line.substring(word.end.character + 1).trim();
+		fdecorations.push({
+			range: new vscode.Range(
+				lineNumber, word.start.character,
+				lineNumber, word.end.character - 1
+			),
+			hoverMessage: fieldValue
+		});
+		cDecorations.push({
+			range: new vscode.Range(
+				lineNumber, word.end.character - 1,
+				lineNumber, word.end.character
+			),
+		});
+		sDecorations.push({
+			range: new vscode.Range(
+				lineNumber, word.end.character + 1,
+				lineNumber, word.end.character + 1 + fieldValue.length
+			),
+		});
+		fields.push({
+			line: lineNumber,
+			column: word.start.character,
+			size: word.end.character - word.start.character - 1,
+			name: fieldName
+		});
+		strings.push({
+			line: lineNumber,
+			column: word.end.character + 2,
+			size: fieldValue.length,
+			name: fieldValue
+		});
+	}
 }
 
 function activateGrammar(context: vscode.ExtensionContext) {
@@ -382,6 +382,18 @@ function decorationsFromLine(
 				const closingOpt = lineText.substring(i).indexOf("]");
 				const initialLength = accumulator.length;
 				if (closingOpt != -1) {
+					// in case it starts by a group
+					if (accumulator.includes("(")) {
+						console.log("Checking for group: " + accumulator.slice(1) + lineText.substring(i));
+						const innerGroupResult = VerifyGroup(groupRegex, accumulator.slice(1) + lineText.substring(i))
+						if (innerGroupResult[0]) {
+							let end, postFix, prefixEnd;
+							[prefixEnd, end, postFix] = decorateFromGroupResult(innerGroupResult, lineNumber, offset, lineText, i-accumulator.length+1, nDecorations, aDecorations);
+							const subStart = prefixEnd - offset + 1;
+							const subline = lineText.substring(subStart, end);
+							decorationsFromLine(subline, lineNumber, groupRegex, wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations, createdAnchors, uncreatedAnchors, references, subStart + offset);
+						}
+					}
 					if (accumulator[1] == "@") {
 						uncreatedAnchors.push({
 							line: lineNumber,
@@ -481,50 +493,65 @@ function decorationsFromLine(
 			}
 			continue;
 		}
-		const [name, size] = extractGroupName(verificationResult[1], verificationResult[2]);
-		let end = lineText.indexOf('(', i);
-		let stack = 0;
-		for (; end < lineText.length; end++) {
-			if (lineText[end] === "(") {
-				stack++;
-			}
-			if (lineText[end] === ")") {
-				stack--;
-			}
-			if (stack === 0) {
-				break;
-			}
-		}
-		if (end === lineText.length) {
-			end = lineText.length - 1;
-		}
-		const nameRange = new vscode.Range(
-			lineNumber, offset + i,
-			lineNumber, offset + i + name.length
-		);
-		const prefixRange = new vscode.Range(
-			lineNumber, offset + i + name.length,
-			lineNumber, offset + i + name.length + size + +(name.length > 0)
-		);
-		nDecorations.push({ range: nameRange });
-		aDecorations.push({ range: prefixRange });
-		i += name.length + size;
-		let postFix = end + 1;
-		for (; postFix < lineText.length; postFix++) {
-			if (lineText[postFix] === ")" || lineText[postFix] === " " || lineText[postFix] === "\n" || lineText[postFix] === "]") {
-				break;
-			}
-		}
-		const suffixRange = new vscode.Range(
-			lineNumber, offset + end + 1,
-			lineNumber, offset + postFix
-		);
-		aDecorations.push({ range: suffixRange });
+		let end, postFix, prefixEnd;
+		[i, prefixEnd, end, postFix] = decorateFromGroupResult(verificationResult, lineNumber, offset, lineText, i, nDecorations, aDecorations);
 		i = postFix;
-		const subStart = prefixRange.end.character - offset + 1;
+		const subStart = prefixEnd - offset + 1;
 		const subline = lineText.substring(subStart, end);
 		decorationsFromLine(subline, lineNumber, groupRegex, wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations, createdAnchors, uncreatedAnchors, references, subStart + offset);
 	}
+}
+
+function decorateFromGroupResult(
+	groupResult: [boolean, string, string, string, boolean],
+	lineNumber: number,
+	offset: number,
+	lineText: string,
+	i: number,
+	nDecorations: vscode.DecorationOptions[],
+	aDecorations: vscode.DecorationOptions[],
+): [number, number, number, number] {
+	const [name, size] = extractGroupName(groupResult[1], groupResult[2]);
+	let end = lineText.indexOf('(', i);
+	let stack = 0;
+	for (; end < lineText.length; end++) {
+		if (lineText[end] === "(") {
+			stack++;
+		}
+		if (lineText[end] === ")") {
+			stack--;
+		}
+		if (stack === 0) {
+			break;
+		}
+	}
+	if (end === lineText.length) {
+		end = lineText.length - 1;
+	}
+	const nameRange = new vscode.Range(
+		lineNumber, offset + i,
+		lineNumber, offset + i + name.length
+	);
+	const prefixRange = new vscode.Range(
+		lineNumber, offset + i + name.length,
+		lineNumber, offset + i + name.length + size + +(name.length > 0)
+	);
+	nDecorations.push({ range: nameRange });
+	aDecorations.push({ range: prefixRange });
+	i += name.length + size;
+	let postFix = end + 1;
+	for (; postFix < lineText.length; postFix++) {
+		if (lineText[postFix] === ")" || lineText[postFix] === " " || lineText[postFix] === "\n" || lineText[postFix] === "]") {
+			break;
+		}
+	}
+	const suffixRange = new vscode.Range(
+		lineNumber, offset + end + 1,
+		lineNumber, offset + postFix
+	);
+	aDecorations.push({ range: suffixRange });
+	return [i, prefixRange.end.character, end, postFix];
+
 }
 
 function VerifyGroup(groupRegex: RegExp, text: string): [boolean, string, string, string, boolean] {
