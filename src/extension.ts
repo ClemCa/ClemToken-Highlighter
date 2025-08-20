@@ -509,7 +509,7 @@ function decorationsFromLine(
 		i += name.length + size;
 		let postFix = end + 1;
 		for (; postFix < lineText.length; postFix++) {
-			if (lineText[postFix] === ")" || lineText[postFix] === " ") {
+			if (lineText[postFix] === ")" || lineText[postFix] === " " || lineText[postFix] === "\n" || lineText[postFix] === "]") {
 				break;
 			}
 		}
