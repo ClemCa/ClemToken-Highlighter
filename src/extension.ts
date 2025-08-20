@@ -286,7 +286,9 @@ function activateGrammar(context: vscode.ExtensionContext) {
 			} else if (text.startsWith("$")) {
 				return [
 					"$[name]",
-					"$[digit]"
+					"$[digit]",
+					"$$[name]",
+					"$$[digit]"
 				].map(item => {
 					const i = new vscode.CompletionItem(item, vscode.CompletionItemKind.Function);
 					i.range = new vscode.Range(word.start, word.end);
@@ -424,17 +426,17 @@ function decorationsFromLine(
 					}
 				}
 			}
-			if (accumulator.startsWith("$[") && accumulator.endsWith("]")) {
+			if (accumulator.startsWith("$[") || accumulator.startsWith("$$[") && accumulator.endsWith("]")) {
 				wdecorations.push({
 					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length + 2,
+						lineNumber, offset + i - accumulator.length + (accumulator.startsWith("$$[") ? 3 : 2),
 						lineNumber, offset + i - 1
 					)
 				});
 				sDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + i - accumulator.length,
-						lineNumber, offset + i
+						lineNumber, offset + i + (accumulator.startsWith("$$[") ? 1 : 0)
 					)
 				});
 			}
