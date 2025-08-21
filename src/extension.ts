@@ -379,12 +379,15 @@ function decorationsFromLine(
 				i++;
 			}
 			if (accumulator.startsWith("[") && !accumulator.includes("]") && !accumulator.includes("|")) {
-				const closingOpt = lineText.substring(i).indexOf("]");
+				const closingOpt = pairedIndex(lineText, "[", "]", i-accumulator.length+1, 1);
 				const initialLength = accumulator.length;
 				if (closingOpt != -1) {
+					// in case it starts by an optional
+					if (accumulator[1] == "[") {
+						decorationsFromLine(accumulator.slice(1) + lineText.substring(i), lineNumber, groupRegex, wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations, optDecorations, createdAnchors, uncreatedAnchors, references, offset + i - accumulator.length + 1);
+					}
 					// in case it starts by a group
 					if (accumulator.includes("(")) {
-						console.log("Checking for group: " + accumulator.slice(1) + lineText.substring(i));
 						const innerGroupResult = VerifyGroup(groupRegex, accumulator.slice(1) + lineText.substring(i))
 						if (innerGroupResult[0]) {
 							let end, postFix, prefixEnd;
@@ -414,7 +417,7 @@ function decorationsFromLine(
 							)
 						});
 					}
-					accumulator += lineText.substring(i, i + closingOpt + 1);
+					accumulator += lineText.substring(i, closingOpt + 1);
 					optDecorations.push({ // [
 						range: new vscode.Range(
 							lineNumber, offset + i - initialLength,
@@ -423,11 +426,11 @@ function decorationsFromLine(
 					});
 					optDecorations.push({ // ]
 						range: new vscode.Range(
-							lineNumber, offset + i + closingOpt,
-							lineNumber, offset + i + closingOpt + 1
+							lineNumber, offset + closingOpt,
+							lineNumber, offset + closingOpt + 1
 						)
 					});
-					const allOr = [...lineText.substring(i, i + closingOpt).matchAll(/\s\|\s/g)];
+					const allOr = [...lineText.substring(i, closingOpt).matchAll(/\s\|\s/g)];
 					for (const match of allOr) {
 						optDecorations.push({
 							range: new vscode.Range(
@@ -552,6 +555,16 @@ function decorateFromGroupResult(
 	aDecorations.push({ range: suffixRange });
 	return [i, prefixRange.end.character, end, postFix];
 
+}
+
+function pairedIndex(text: string, open: string, close: string, start: number = 0, startState: number = 0): number {
+	let depth = startState;
+	for (let i = start; i < text.length; i++) {
+		if (text[i] === open) depth++;
+		if (text[i] === close) depth--;
+		if (depth === 0) return i;
+	}
+	return -1;
 }
 
 function VerifyGroup(groupRegex: RegExp, text: string): [boolean, string, string, string, boolean] {
