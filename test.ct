@@ -1,26 +1,39 @@
-import $[name] _(. $[name])* from $[name] ;
-import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* ) ;
-import:(import target:($[name] dot:_(. $[name]) )+ target:((,): $[name])* from source:($[name])): ;
+# NAME RULES
+$name: [a-zA-Z_][a-zA-Z0-9_]*
 
 # MAIN
-import @identifier (. @identifier)* from @identifier ;
-@declaration: [var | @type] @identifier = @expression ;
+@statement: [@import | @declaration | @call] ;
 
+## STATEMENTS
+@import: import @identifier (. @identifier)* from @identifier
+@declaration: [var | @type] @identifier = @expression
 
 ## SUB
-@expression: [@literal | @identifier | @call]
+@expression: [@literal | @call | @lambda | @identifier]
 
+@arguments: @expression (, @expression)*
+
+@implicit_parameters: @implicit_parameter (, @implicit_parameter)*
+@parameters: @parameter (, @parameter)*
+
+@parameter: @type @identifier
+@implicit_parameter: @identifier
+
+## FUNCS
+@call: @identifier ( (@arguments):? )
+@lambda: [inline:(( parameters:(@implicit_parameters):? ) => @expression): | long:(( parameters:(@implicit_parameters):? ) => body:({ statements:(@statement):* })):]
 
 ## VALUES
-
 @literal: [@string | @number | @boolean]
-@string: " content:(_($[name])*) "
+@string: " content:(($$[greedy]):) "
+@boolean: [true | false]
 
 ### NUMBERS
 @number: [@integer | @float]
-@integer: _($[digit])+
+@integer: ($[digit]):+
 @float: @integer . @integer
 
 
 # BASIC
 @identifier: $[name]
+@type: $[name]
