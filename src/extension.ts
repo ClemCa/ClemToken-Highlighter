@@ -274,13 +274,13 @@ function activateGrammar(context: vscode.ExtensionContext) {
 	});
 	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
 		provideCompletionItems(document, position, token) {
-			const word = document.getWordRangeAtPosition(position, /(?:\?\@|\@|(?:\$\[?))\w+/);
+			const word = document.getWordRangeAtPosition(position, /(?:\w+:\@\w+:\?\@|\?\@|\@|(?:\$\[?))\w+/);
 			if (!word) return [];
 			const text = document.getText(word);
 			if (!text) return [];
-			if (text.startsWith("@") || text.startsWith("?@")) {
+			if (text.startsWith("@") || text.startsWith("?@") || text.includes(":@") || text.includes(":?@")) {
 				if (word.start.character === 0) {
-					if (text[0] === '?') {
+					if (text[0] !== '@') {
 						return [];
 					}
 					return uncreatedAnchors.map(anchor => {
@@ -289,8 +289,10 @@ function activateGrammar(context: vscode.ExtensionContext) {
 						return item;
 					});
 				}
+				const preStr = text.substring(0, text.indexOf("@"));
 				return createdAnchors.map(anchor => {
-					const item = new vscode.CompletionItem(anchor.name, vscode.CompletionItemKind.Function);
+
+					const item = new vscode.CompletionItem(preStr + anchor.name, vscode.CompletionItemKind.Function);
 					item.range = new vscode.Range(word.start, word.end);
 					return item;
 				});
@@ -383,9 +385,9 @@ function decorationsFromLine(
 	references: { line: number, column: number, size: number, name: string }[],
 	offset: number = 0
 ) {
-	if(lineText.startsWith('$')) {
+	if (lineText.startsWith('$')) {
 		const indexColon = lineText.indexOf(':');
-		if(indexColon != -1 && (lineText.substring(1, indexColon).match(/^\w+$/))) {
+		if (indexColon != -1 && (lineText.substring(1, indexColon).match(/^\w+$/))) {
 			specDecorations.push({
 				range: new vscode.Range(
 					lineNumber, offset,
@@ -415,7 +417,7 @@ function decorationsFromLine(
 				i++;
 			}
 			if (accumulator.startsWith("[") && !accumulator.includes("]") && !accumulator.includes("|")) {
-				const closingOpt = pairedIndex(lineText, "[", "]", i-accumulator.length+1, 1);
+				const closingOpt = pairedIndex(lineText, "[", "]", i - accumulator.length + 1, 1);
 				const initialLength = accumulator.length;
 				if (closingOpt != -1) {
 					// in case it starts by an optional
@@ -430,7 +432,7 @@ function decorationsFromLine(
 						const innerGroupResult = VerifyGroup(groupRegex, accumulator.slice(1) + lineText.substring(i))
 						if (innerGroupResult[0]) {
 							let end, postFix, prefixEnd;
-							[prefixEnd, end, postFix] = decorateFromGroupResult(innerGroupResult, lineNumber, offset, lineText, i-accumulator.length+1, nDecorations, aDecorations);
+							[prefixEnd, end, postFix] = decorateFromGroupResult(innerGroupResult, lineNumber, offset, lineText, i - accumulator.length + 1, nDecorations, aDecorations);
 							const subStart = prefixEnd - offset + 1;
 							const subline = lineText.substring(subStart, end);
 							decorationsFromLine(subline, lineNumber, groupRegex,
@@ -497,7 +499,7 @@ function decorationsFromLine(
 					)
 				});
 			}
-			if (accumulator.startsWith("@") || (accumulator.startsWith("?@"))) {
+			if (accumulator.startsWith("@") || (accumulator.startsWith("?@") || accumulator.includes(":@") || accumulator.includes(":?@"))) {
 				let cutShort = false;
 				if (accumulator[accumulator.length - 1] === ":") {
 					cutShort = true;
@@ -516,12 +518,50 @@ function decorationsFromLine(
 						name: accumulator.slice(0, -1)
 					});
 				} else {
-					uncreatedAnchors.push({
-						line: lineNumber,
-						column: offset + i - accumulator.length,
-						size: accumulator.length,
-						name: accumulator
-					});
+					if (accumulator.startsWith("@")) {
+						uncreatedAnchors.push({
+							line: lineNumber,
+							column: offset + i - accumulator.length,
+							size: accumulator.length,
+							name: accumulator
+						});
+					} else if (accumulator.startsWith("?@")) {
+						aDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - accumulator.length,
+								lineNumber, offset + i - accumulator.length + 1
+							)
+						});
+						uncreatedAnchors.push({
+							line: lineNumber,
+							column: offset + i - accumulator.length + 1,
+							size: accumulator.length - 1,
+							name: accumulator.slice(1)
+						});
+					} else {
+						const nameEndIndex = accumulator.indexOf(":");
+						const atIndex = accumulator.indexOf("@");
+						const questionIndex = accumulator.indexOf("?");
+						nDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - accumulator.length,
+								lineNumber, offset + i - accumulator.length + nameEndIndex
+							)
+						});
+						aDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - accumulator.length + nameEndIndex,
+								lineNumber, offset + i - accumulator.length + nameEndIndex + (questionIndex == -1 ? 1 : 2)
+							)
+
+						});
+						uncreatedAnchors.push({
+							line: lineNumber,
+							column: offset + i - accumulator.length + atIndex,
+							size: accumulator.length - atIndex,
+							name: accumulator.slice(atIndex)
+						});
+					}
 				}
 				anbDecorations.push({
 					range: new vscode.Range(
