@@ -402,14 +402,14 @@ function decorationsFromLine(
 				)
 			});
 			const modeIndex = lineText.substring(indexColon + 1).indexOf(':');
-			if (modeIndex != -1) {
+			if (modeIndex != -1 && lineText.substring(indexColon + 1, indexColon + 1 + modeIndex).match(/^\w+$/)) {
 				specmDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + indexColon + 1,
 						lineNumber, offset + indexColon + 1 + modeIndex + 1
 					)
 				});
-				indexColon = modeIndex;
+				indexColon = modeIndex + indexColon + 1;
 			}
 			specrDecorations.push({
 				range: new vscode.Range(
