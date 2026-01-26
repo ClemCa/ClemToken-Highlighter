@@ -644,9 +644,19 @@ function decorateFromGroupResult(
 
 function pairedIndex(text: string, open: string, close: string, start: number = 0, startState: number = 0): number {
 	let depth = startState;
+	let skipNext = false;
 	for (let i = start; i < text.length; i++) {
-		if (text[i] === open) depth++;
-		if (text[i] === close) depth--;
+		if (!skipNext) {
+			if (text[i] === '\\') {
+				skipNext = true;
+				continue;
+			}
+			if (text[i] === open) depth++;
+			if (text[i] === close) depth--;
+		}
+		else {
+			skipNext = false;
+		}
 		if (depth === 0) return i;
 	}
 	return -1;
