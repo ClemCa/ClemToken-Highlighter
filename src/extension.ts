@@ -274,12 +274,15 @@ function activateGrammar(context: vscode.ExtensionContext) {
 	});
 	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
 		provideCompletionItems(document, position, token) {
-			const word = document.getWordRangeAtPosition(position, /\@|(?:\$\[?)\w*/);
+			const word = document.getWordRangeAtPosition(position, /(?:\?\@|\@|(?:\$\[?))\w+/);
 			if (!word) return [];
 			const text = document.getText(word);
 			if (!text) return [];
-			if (text.startsWith("@")) {
+			if (text.startsWith("@") || text.startsWith("?@")) {
 				if (word.start.character === 0) {
+					if (text[0] === '?') {
+						return [];
+					}
 					return uncreatedAnchors.map(anchor => {
 						const item = new vscode.CompletionItem(anchor.name + ":", vscode.CompletionItemKind.Function);
 						item.range = new vscode.Range(word.start, word.end);
@@ -322,7 +325,7 @@ function activateGrammar(context: vscode.ExtensionContext) {
 		const specDecorations = [] as vscode.DecorationOptions[];
 		const specrDecorations = [] as vscode.DecorationOptions[];
 		const text = activeEditor.document.getText().split(/\r?\n/);
-		const groupRegex = /^(?:(?<prefix>[^\[\(\):\+\*\-\s]+:_?|_)(?<token>\((?:[^:\+\*\-()]|(?<subgroup>(?:[^\(\):\+\*\-]+:_?|_)?\(.*\):?(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<suffix>:?(?:\+|\*|\d+(?:-\d+)?|_|:))?|(?<token_suff>\((?:[^:\+\*\-()]|(?<subgroup_suff>:?(?:[^\(\):\+\*\-]+:_?|_)?\(.*\)(?:\+|\*|\d+(?:-\d+)?|_|:)?))*\))(?<solo_suffix>:?(?:\+|\*|\d+(?:-\d+)?|_|:)))/;
+		const groupRegex = /^(?:(?<prefix>[^\[\(\):\+\*\-\s]+:_?|_)(?<token>\((?:(?<subgroup>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)?))|^(?:(?<post_token>\((?:(?<subgroup_post>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<solo_suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)))/;
 		createdAnchors.length = 0;
 		uncreatedAnchors.length = 0;
 		references.length = 0;
@@ -436,7 +439,7 @@ function decorationsFromLine(
 								createdAnchors, uncreatedAnchors, references, subStart + offset);
 						}
 					}
-					if (accumulator[1] == "@") {
+					if (accumulator[1] == "@" || (accumulator[1] == "?" && accumulator[2] == "@")) {
 						uncreatedAnchors.push({
 							line: lineNumber,
 							column: offset + i - accumulator.length + 1,
@@ -490,11 +493,11 @@ function decorationsFromLine(
 				sDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + i - accumulator.length,
-						lineNumber, offset + i + (accumulator.startsWith("$$[") ? 1 : 0)
+						lineNumber, offset + i
 					)
 				});
 			}
-			if (accumulator.startsWith("@")) {
+			if (accumulator.startsWith("@") || (accumulator.startsWith("?@"))) {
 				let cutShort = false;
 				if (accumulator[accumulator.length - 1] === ":") {
 					cutShort = true;
@@ -621,7 +624,7 @@ function VerifyGroup(groupRegex: RegExp, text: string): [boolean, string, string
 	if (match.groups.token) {
 		return [true, match.groups.token, match.groups.prefix, match.groups.suffix, !!match.groups.subgroup];
 	} else {
-		return [true, match.groups.token_suff, "", match.groups.solo_suffix, !!match.groups.subgroup_suff];
+		return [true, match.groups.post_token, "", match.groups.solo_suffix, !!match.groups.subgroup_post];
 	}
 }
 function extractGroupName(value: string, prefix: string): [string, number] {

@@ -25,7 +25,7 @@ $name: [a-zA-Z_][a-zA-Z0-9_]*
 
 ## VALUES
 @literal: [@string | @number | @boolean]
-@string: " content:(($$[greedy]):) "
+@string: " content:($$[greedy]) "
 @boolean: [true | false]
 
 ### NUMBERS
