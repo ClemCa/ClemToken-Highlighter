@@ -162,6 +162,8 @@ function activateGrammar(context: vscode.ExtensionContext) {
 	const specColor = vscode.workspace.getConfiguration('clemtoken').get('specColor', '#dcdcaa');
 	const specModeColor = vscode.workspace.getConfiguration('clemtoken').get('specModeColor', '#9cdcfe');
 	const specRegexColor = vscode.workspace.getConfiguration('clemtoken').get('specRegexColor', '#c586c0');
+	const lookaheadColor = vscode.workspace.getConfiguration('clemtoken').get('lookaheadColor', '#209b49');
+	const lookaheadTextColor = vscode.workspace.getConfiguration('clemtoken').get('lookaheadTextColor', '#31f227');
 
 	const titleDecorationType = vscode.window.createTextEditorDecorationType({
 		color: titleColor
@@ -196,6 +198,12 @@ function activateGrammar(context: vscode.ExtensionContext) {
 	});
 	const specRegexDecorationType = vscode.window.createTextEditorDecorationType({
 		color: specRegexColor
+	});
+	const lookaheadDecorationType = vscode.window.createTextEditorDecorationType({
+		color: lookaheadColor
+	});
+	const lookaheadTextDecorationType = vscode.window.createTextEditorDecorationType({
+		color: lookaheadTextColor
 	});
 	const uncreatedAnchors = [] as { line: number, column: number, size: number, name: string }[];
 	const createdAnchors = [] as { line: number, column: number, size: number, name: string }[];
@@ -282,7 +290,7 @@ function activateGrammar(context: vscode.ExtensionContext) {
 			if (!word) return [];
 			const text = document.getText(word);
 			if (!text) return [];
-			if (text.startsWith("@") || text.startsWith("?@") || text.includes(":@") || text.includes(":?@")) {
+			if ((text.startsWith("@") && !text.startsWith("@>")) || text.startsWith("?@") || text.includes(":@") || text.includes(":?@")) {
 				if (word.start.character === 0) {
 					if (text[0] !== '@') {
 						return [];
@@ -331,6 +339,8 @@ function activateGrammar(context: vscode.ExtensionContext) {
 		const specDecorations = [] as vscode.DecorationOptions[];
 		const specmDecorations = [] as vscode.DecorationOptions[];
 		const specrDecorations = [] as vscode.DecorationOptions[];
+		const lDecorations = [] as vscode.DecorationOptions[];
+		const ltDecorations = [] as vscode.DecorationOptions[];
 		const text = activeEditor.document.getText().split(/\r?\n/);
 		const groupRegex = /^(?:(?<prefix>[^\[\(\):\+\*\-\s]+:_?|_)(?<token>\((?:(?<subgroup>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)?))|^(?:(?<post_token>\((?:(?<subgroup_post>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<solo_suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)))/;
 		createdAnchors.length = 0;
@@ -345,7 +355,7 @@ function activateGrammar(context: vscode.ExtensionContext) {
 				continue;
 			}
 			decorationsFromLine(text[i], i, groupRegex, decorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-				optDecorations, specDecorations, specmDecorations, specrDecorations,
+				optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
 				createdAnchors, uncreatedAnchors, references);
 		}
 		activeEditor.setDecorations(optionalDecorationType, optDecorations);
@@ -359,6 +369,8 @@ function activateGrammar(context: vscode.ExtensionContext) {
 		activeEditor.setDecorations(specDecorationType, specDecorations);
 		activeEditor.setDecorations(specModeDecorationType, specmDecorations);
 		activeEditor.setDecorations(specRegexDecorationType, specrDecorations);
+		activeEditor.setDecorations(lookaheadDecorationType, lDecorations);
+		activeEditor.setDecorations(lookaheadTextDecorationType, ltDecorations);
 		for (let i = uncreatedAnchors.length - 1; i >= 0; i--) {
 			let found = false;
 			for (let j = 0; j < createdAnchors.length; j++) {
@@ -377,7 +389,7 @@ function decorationsFromLine(
 	lineText: string,
 	lineNumber: number,
 	groupRegex: RegExp,
-	wdecorations: vscode.DecorationOptions[], // word inside selector decorations
+	wDecorations: vscode.DecorationOptions[], // word inside selector decorations
 	sDecorations: vscode.DecorationOptions[], // selector decorations
 	nDecorations: vscode.DecorationOptions[], // name decorations
 	aDecorations: vscode.DecorationOptions[], // affix decorations
@@ -387,6 +399,8 @@ function decorationsFromLine(
 	specDecorations: vscode.DecorationOptions[], // spec decorations
 	specmDecorations: vscode.DecorationOptions[], // spec mode decorations
 	specrDecorations: vscode.DecorationOptions[], // spec regex decorations
+	lDecorations: vscode.DecorationOptions[] = [], // lookahead decorations
+	ltDecorations: vscode.DecorationOptions[] = [], // lookahead text decorations
 	createdAnchors: { line: number, column: number, size: number, name: string }[],
 	uncreatedAnchors: { line: number, column: number, size: number, name: string }[],
 	references: { line: number, column: number, size: number, name: string }[],
@@ -440,9 +454,9 @@ function decorationsFromLine(
 					// in case it starts by an optional
 					if (accumulator[1] == "[") {
 						decorationsFromLine(accumulator.slice(1) + lineText.substring(i), lineNumber, groupRegex,
-							wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-							optDecorations, specDecorations, specmDecorations, specrDecorations, createdAnchors, uncreatedAnchors,
-							references, offset + i - accumulator.length + 1);
+							wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
+							optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
+							createdAnchors, uncreatedAnchors, references, offset + i - accumulator.length + 1);
 					}
 					// in case it starts by a group
 					if (accumulator.includes("(")) {
@@ -453,8 +467,8 @@ function decorationsFromLine(
 							const subStart = prefixEnd - offset + 1;
 							const subline = lineText.substring(subStart, end);
 							decorationsFromLine(subline, lineNumber, groupRegex,
-								wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-								optDecorations, specDecorations, specmDecorations, specrDecorations,
+								wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
+								optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
 								createdAnchors, uncreatedAnchors, references, subStart + offset);
 						}
 					}
@@ -503,7 +517,7 @@ function decorationsFromLine(
 				}
 			}
 			if (accumulator.startsWith("$[") || accumulator.startsWith("$$[") && accumulator.endsWith("]")) {
-				wdecorations.push({
+				wDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + i - accumulator.length + (accumulator.startsWith("$$[") ? 3 : 2),
 						lineNumber, offset + i - 1
@@ -516,7 +530,21 @@ function decorationsFromLine(
 					)
 				});
 			}
-			if (accumulator.startsWith("@") || (accumulator.startsWith("?@") || accumulator.includes(":@") || accumulator.includes(":?@"))) {
+			if (accumulator.startsWith("@>")) {
+				lDecorations.push({
+					range: new vscode.Range(
+						lineNumber, offset + i - accumulator.length,
+						lineNumber, offset + i - accumulator.length + 2
+					)
+				});
+				ltDecorations.push({
+					range: new vscode.Range(
+						lineNumber, offset + i - accumulator.length + 2,
+						lineNumber, offset + i
+					)
+				});
+			}
+			else if (accumulator.startsWith("@") || (accumulator.startsWith("?@") || accumulator.includes(":@") || accumulator.includes(":?@"))) {
 				let cutShort = false;
 				if (accumulator[accumulator.length - 1] === ":") {
 					cutShort = true;
@@ -601,8 +629,8 @@ function decorationsFromLine(
 		const subStart = prefixEnd - offset + 1;
 		const subline = lineText.substring(subStart, end);
 		decorationsFromLine(subline, lineNumber, groupRegex,
-			wdecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-			optDecorations, specDecorations, specmDecorations, specrDecorations,
+			wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
+			optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
 			createdAnchors, uncreatedAnchors, references, subStart + offset);
 	}
 }
