@@ -547,7 +547,7 @@ function decorationsFromLine(
 							lineNumber, offset + i - accumulator.length + 4
 						)
 					});
-					const endIndex = lineText.substring(i).search(/[^\s\\]\]/);
+					const endIndex = lineText.substring(i).search(/[^\s]\]/);
 					if (endIndex == -1) {
 						continue;
 					} else
