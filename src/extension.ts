@@ -533,6 +533,74 @@ function decorationsFromLine(
 				});
 			}
 			if (accumulator.startsWith("@>")) {
+				if (accumulator.startsWith("@>>")) {
+					// optional lookahead
+					lDecorations.push({
+						range: new vscode.Range(
+							lineNumber, offset + i - accumulator.length,
+							lineNumber, offset + i - accumulator.length + 3
+						)
+					});
+					optDecorations.push({ // [
+						range: new vscode.Range(
+							lineNumber, offset + i - accumulator.length + 3,
+							lineNumber, offset + i - accumulator.length + 4
+						)
+					});
+					const endIndex = lineText.substring(i).search(/[^\s\\]\]/);
+					if (endIndex == -1) {
+						continue;
+					} else
+					{
+						let cursor = i - 4;
+						const startCursor = cursor;
+						const allOr = [...lineText.substring(cursor, i + endIndex).matchAll(/\s\|\s/g)];
+						if (allOr.length == 0) {
+							ltDecorations.push({ // before ]
+								range: new vscode.Range(
+									lineNumber, offset + cursor,
+									lineNumber, offset + endIndex
+								)
+							});
+							lDecorations.push({ // ]
+								range: new vscode.Range(
+									lineNumber, offset + endIndex,
+									lineNumber, offset + endIndex + 1
+								)
+							});
+							i += endIndex + 1;
+							continue;
+						}
+						for (const match of allOr) {
+							ltDecorations.push({
+								range: new vscode.Range( // before |
+									lineNumber, offset + i,
+									lineNumber, offset + startCursor + match.index
+								)
+							});
+							optDecorations.push({
+								range: new vscode.Range( // |
+									lineNumber, offset + startCursor + match.index,
+									lineNumber, offset + startCursor + match.index + 1
+								)
+							});
+							cursor = startCursor + match.index + 1;
+						}
+						ltDecorations.push({ // after last |
+							range: new vscode.Range(
+								lineNumber, offset + cursor,
+								lineNumber, offset + endIndex
+							)
+						});
+						lDecorations.push({ // ]
+							range: new vscode.Range(
+								lineNumber, offset + i + endIndex + 1,
+								lineNumber, offset + i + endIndex + 2
+							)
+						});
+						i += endIndex + 1;
+					}
+				}
 				lDecorations.push({
 					range: new vscode.Range(
 						lineNumber, offset + i - accumulator.length,
