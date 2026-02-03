@@ -554,7 +554,7 @@ function decorationsFromLine(
 					{
 						let cursor = i - 4;
 						const startCursor = cursor;
-						const allOr = [...lineText.substring(cursor, i + endIndex).matchAll(/\s\|\s/g)];
+						const allOr = [...lineText.substring(startCursor, i + endIndex).matchAll(/\s\|\s/g)];
 						if (allOr.length == 0) {
 							ltDecorations.push({ // before ]
 								range: new vscode.Range(
@@ -562,7 +562,7 @@ function decorationsFromLine(
 									lineNumber, offset + endIndex
 								)
 							});
-							lDecorations.push({ // ]
+							optDecorations.push({ // ]
 								range: new vscode.Range(
 									lineNumber, offset + endIndex,
 									lineNumber, offset + endIndex + 1
@@ -574,31 +574,26 @@ function decorationsFromLine(
 						for (const match of allOr) {
 							ltDecorations.push({
 								range: new vscode.Range( // before |
-									lineNumber, offset + i,
+									lineNumber, offset + cursor + 2,
 									lineNumber, offset + startCursor + match.index
-								)
-							});
-							optDecorations.push({
-								range: new vscode.Range( // |
-									lineNumber, offset + startCursor + match.index,
-									lineNumber, offset + startCursor + match.index + 1
 								)
 							});
 							cursor = startCursor + match.index + 1;
 						}
 						ltDecorations.push({ // after last |
 							range: new vscode.Range(
-								lineNumber, offset + cursor,
-								lineNumber, offset + endIndex
+								lineNumber, offset + cursor + 2,
+								lineNumber, offset + i + endIndex + 1
 							)
 						});
-						lDecorations.push({ // ]
+						optDecorations.push({ // ]
 							range: new vscode.Range(
 								lineNumber, offset + i + endIndex + 1,
 								lineNumber, offset + i + endIndex + 2
 							)
 						});
-						i += endIndex + 1;
+						i += endIndex;
+						continue;
 					}
 				}
 				lDecorations.push({
