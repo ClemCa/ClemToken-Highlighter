@@ -474,6 +474,7 @@ function decorationsFromLine(
 								createdAnchors, uncreatedAnchors, references, subStart + offset);
 						}
 					}
+					// in case it starts by an anchor
 					if (accumulator[1] == "@" || (accumulator[1] == "?" && accumulator[2] == "@")) {
 						uncreatedAnchors.push({
 							line: lineNumber,
@@ -507,6 +508,14 @@ function decorationsFromLine(
 							lineNumber, offset + closingOpt + 1
 						)
 					});
+					if (closingOpt + 1 < lineText.length && lineText[closingOpt + 1] === ':') {
+						aDecorations.push({ // ignored :
+							range: new vscode.Range(
+								lineNumber, offset + closingOpt + 1,
+								lineNumber, offset + closingOpt + 2
+							)
+						});
+					}
 					const allOr = [...lineText.substring(i, closingOpt).matchAll(/\s\|\s/g)];
 					for (const match of allOr) {
 						optDecorations.push({
@@ -550,8 +559,7 @@ function decorationsFromLine(
 					const endIndex = lineText.substring(i).search(/[^\\]\]/);
 					if (endIndex == -1) {
 						continue;
-					} else
-					{
+					} else {
 						let cursor = i - 4;
 						const startCursor = cursor;
 						const allOr = [...lineText.substring(startCursor, i + endIndex).matchAll(/\s\|\s/g)];
@@ -613,7 +621,7 @@ function decorationsFromLine(
 				let cutShort = false;
 				if (accumulator[accumulator.length - 1] === ":") {
 					cutShort = true;
-					if (accumulator[accumulator.length-2] === "?") {
+					if (accumulator[accumulator.length - 2] === "?") {
 						createdAnchors.push({
 							line: lineNumber,
 							column: offset + i - accumulator.length + 2,

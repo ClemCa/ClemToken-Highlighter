@@ -7,7 +7,7 @@
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.4.11",
+  "version": "1.4.12",
   "engines": {
     "vscode": "^1.103.0"
   },
