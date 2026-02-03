@@ -312,8 +312,10 @@ function activateGrammar(context: vscode.ExtensionContext) {
 				return [
 					"$[name]",
 					"$[digit]",
+					"$[space]",
 					"$$[name]",
-					"$$[digit]"
+					"$$[digit]",
+					"$$[space]"
 				].map(item => {
 					const i = new vscode.CompletionItem(item, vscode.CompletionItemKind.Function);
 					i.range = new vscode.Range(word.start, word.end);
@@ -548,6 +550,20 @@ function decorationsFromLine(
 				let cutShort = false;
 				if (accumulator[accumulator.length - 1] === ":") {
 					cutShort = true;
+					if (accumulator[accumulator.length-2] === "?") {
+						createdAnchors.push({
+							line: lineNumber,
+							column: offset + i - accumulator.length + 2,
+							size: accumulator.length - 2,
+							name: accumulator.slice(2, -2)
+						});
+						aDecorations.push({
+							range: new vscode.Range(
+								lineNumber, offset + i - 2,
+								lineNumber, offset + i - 1
+							)
+						});
+					}
 					createdAnchors.push({
 						line: lineNumber,
 						column: offset + i - accumulator.length + 1,
