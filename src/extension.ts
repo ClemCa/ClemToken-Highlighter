@@ -112,7 +112,7 @@ function abstractDecorationsFromLine(document: vscode.TextDocument, line: string
 	strings: { line: number, column: number, size: number, name: string }[]) {
 	if (line.trimStart().startsWith('(')) return;
 	let whitespaceAmount = line.length - line.trimStart().length; // not efficient but I'll prioritize readability for this one
-	var word = document.getWordRangeAtPosition(new vscode.Position(lineNumber, whitespaceAmount), /\w+:/);
+	var word = document.getWordRangeAtPosition(new vscode.Position(lineNumber, whitespaceAmount), /[\w_]+:/);
 	if (word) {
 		const fieldName = line.substring(word.start.character, word.end.character - 1);
 		const fieldValue = line.substring(word.end.character + 1).trim();
