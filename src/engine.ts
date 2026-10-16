@@ -21,11 +21,81 @@ export interface TokenSet {
 	tokens: SyntaxToken[];
 }
 
+/** One rule's static analysis, as emitted by `-stats grammar json`. `low`/`high` are `null` for infinity. */
+export interface RuleGrammarStats {
+	name: string;
+	type: string;
+	value: string | null;
+	low: number | null;
+	high: number | null;
+	recursive: boolean;
+	unproductive: boolean;
+}
+
+export interface GrammarStats {
+	schema: string;
+	version: number;
+	ruleCount: number;
+	specCount: number;
+	counts: { simple: number; reserved: number; group: number; reference: number; anchor: number; optional: number; lookahead: number; empty: number; nodes: number };
+	total: { low: number | null; high: number | null };
+	rules: RuleGrammarStats[];
+}
+
+/** One rule's runtime attribution, as emitted by `-stats parse json`. */
+export interface RuleMetrics {
+	name: string;
+	type: string;
+	value: string | null;
+	executions: number;
+	matches: number;
+	failures: number;
+	allocatedBytes: number;
+	selfAllocatedBytes: number;
+	totalMs: number;
+	selfMs: number;
+}
+
+export interface ParseMetrics {
+	schema: string;
+	version: number;
+	totalAllocatedBytes: number;
+	totalElapsedMs: number;
+	unattributedAllocatedBytes: number;
+	unattributedElapsedMs: number;
+	rules: RuleMetrics[];
+}
+
 const SCHEMA = 'clemtoken.tokens';
+const GRAMMAR_STATS_SCHEMA = 'clemtoken.grammarStats';
+const PARSE_METRICS_SCHEMA = 'clemtoken.parseMetrics';
 const VERSION = 1;
 const TIMEOUT_MS = 10000;
+/** Hard cap on engine stdout + stderr, so a runaway engine cannot exhaust the extension host. */
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 export class EngineError extends Error { }
+
+/** Kill without ever throwing: an exception in a timer callback becomes an uncaught exception. */
+function kill(child: import('node:child_process').ChildProcess): void {
+	try {
+		child.kill();
+	} catch {
+		// already gone
+	}
+}
+
+/**
+ * A `ChildProcess` whose stdio is piped, or `undefined` if the OS refused to start it. `spawn`
+ * throws synchronously for a bad executable path, which must not escape an async callback.
+ */
+function trySpawn(binary: string, args: string[]): import('node:child_process').ChildProcessWithoutNullStreams | undefined {
+	try {
+		return spawn(binary, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * Shells the bundled NativeAOT engine out once per document version.
@@ -35,7 +105,8 @@ export class EngineError extends Error { }
  * which keeps `line`/`character`/`length` in UTF-16 units - the same unit VS Code positions use.
  */
 export class ClemTokenEngine implements vscode.Disposable {
-	private readonly cache = new Map<string, { version: number; tokens: Promise<TokenSet> }>();
+	private readonly tokenCache = new Map<string, { version: number; value: Promise<TokenSet> }>();
+	private readonly statsCache = new Map<string, { version: number; value: Promise<GrammarStats> }>();
 	private readonly children = new Set<import('node:child_process').ChildProcess>();
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
@@ -128,96 +199,151 @@ export class ClemTokenEngine implements vscode.Disposable {
 	 * document is only ever shelled out once.
 	 */
 	tokenize(text: string, documentKey?: string, documentVersion?: number): Promise<TokenSet> {
+		const run = () => this.run(['-f', this.resolveGrammar(), '-in', '-tokens', 'json'], text)
+			.then((parsed) => this.contract(parsed, SCHEMA, VERSION) as TokenSet);
 		if (documentKey === undefined || documentVersion === undefined) {
-			return this.run(text);
+			return run();
 		}
-		const hit = this.cache.get(documentKey);
-		if (hit !== undefined && hit.version === documentVersion) {
-			return hit.tokens;
-		}
-		const tokens = this.run(text);
-		this.cache.set(documentKey, { version: documentVersion, tokens });
-		// a failed run must not stay cached, or the document is stuck on the error until it changes
-		tokens.catch(() => {
-			if (this.cache.get(documentKey)?.tokens === tokens) {
-				this.cache.delete(documentKey);
-			}
-		});
-		return tokens;
+		return this.memo(this.tokenCache, documentKey, documentVersion, run);
 	}
 
-	private run(text: string): Promise<TokenSet> {
+	/**
+	 * Static analysis of a grammar (`-stats grammar`). The grammar arrives over stdin (`-f -`), so
+	 * the buffer under edit is analyzed as-is. Cached per document version like `tokenize`.
+	 */
+	grammarStats(text: string, documentKey?: string, documentVersion?: number): Promise<GrammarStats> {
+		const run = () => this.run(['-f', '-', '-stats', 'grammar', 'json'], text)
+			.then((parsed) => this.contract(parsed, GRAMMAR_STATS_SCHEMA, VERSION) as GrammarStats);
+		if (documentKey === undefined || documentVersion === undefined) {
+			return run();
+		}
+		return this.memo(this.statsCache, documentKey, documentVersion, run);
+	}
+
+	/** Runtime parse metrics of `text` under the DSL grammar (`-stats parse`). Uncached: one-shot profile. */
+	profile(text: string): Promise<ParseMetrics> {
+		return this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'json'], text)
+			.then((parsed) => this.contract(parsed, PARSE_METRICS_SCHEMA, VERSION) as ParseMetrics);
+	}
+
+	/** Reuse an in-flight or completed run for the same key + version; a failed run is dropped. */
+	private memo<T>(cache: Map<string, { version: number; value: Promise<T> }>, key: string, version: number, make: () => Promise<T>): Promise<T> {
+		const hit = cache.get(key);
+		if (hit !== undefined && hit.version === version) {
+			return hit.value;
+		}
+		const value = make();
+		cache.set(key, { version, value });
+		value.catch(() => {
+			if (cache.get(key)?.value === value) {
+				cache.delete(key);
+			}
+		});
+		return value;
+	}
+
+	/** Every payload is versioned the same way, so the contract is enforced in one place. */
+	private contract(parsed: { schema?: string; version?: number }, schema: string, version: number): unknown {
+		if (parsed.schema !== schema) {
+			throw new EngineError(`Unexpected engine payload: schema "${parsed.schema}".`);
+		}
+		if ((parsed.version ?? 0) > version) {
+			throw new EngineError(`Engine speaks ${schema} v${parsed.version}, this extension understands v${version}.`);
+		}
+		return parsed;
+	}
+
+	private run(args: string[], text: string): Promise<{ schema?: string; version?: number }> {
 		const binary = this.resolveBinary();
 		if (binary === undefined) {
 			return Promise.reject(new EngineError(`No ClemToken engine bundled for ${this.target}.`));
 		}
-		const grammar = this.resolveGrammar();
-		return new Promise<TokenSet>((resolve, reject) => {
-			const child = spawn(binary, ['-f', grammar, '-in', '-tokens', 'json'], {
-				stdio: ['pipe', 'pipe', 'pipe'],
-				windowsHide: true,
-			});
+		return new Promise<{ schema?: string; version?: number }>((resolve, reject) => {
+			const child = trySpawn(binary, args);
+			if (child === undefined) {
+				reject(new EngineError('Could not start the ClemToken engine.'));
+				return;
+			}
 			this.children.add(child);
 			const out: Buffer[] = [];
 			const err: Buffer[] = [];
+			let bytes = 0;
 			let settled = false;
+			let timer: NodeJS.Timeout | undefined;
+			// every exit path goes through `finish`, so the promise settles exactly once and the child
+			// is always dropped from the set even when the engine fail-fasts
 			const finish = (): boolean => {
 				if (settled) {
 					return false;
 				}
 				settled = true;
+				if (timer !== undefined) {
+					clearTimeout(timer);
+					timer = undefined;
+				}
 				this.children.delete(child);
 				return true;
 			};
-			const timer = setTimeout(() => {
+			const fail = (error: EngineError): void => {
 				if (finish()) {
-					child.kill();
-					reject(new EngineError(`ClemToken engine timed out after ${TIMEOUT_MS}ms.`));
+					kill(child);
+					reject(error);
 				}
-			}, TIMEOUT_MS);
-			child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
-			child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-			child.on('error', (e) => {
-				if (finish()) {
-					clearTimeout(timer);
-					reject(new EngineError(`Could not start the ClemToken engine: ${e.message}`));
+			};
+			timer = setTimeout(() => fail(new EngineError(`ClemToken engine timed out after ${TIMEOUT_MS}ms.`)), TIMEOUT_MS);
+			child.stdout.on('data', (chunk: Buffer) => {
+				out.push(chunk);
+				bytes += chunk.length;
+				if (bytes > MAX_OUTPUT_BYTES) {
+					fail(new EngineError(`ClemToken engine output exceeded ${MAX_OUTPUT_BYTES} bytes.`));
 				}
 			});
-			child.on('close', (code) => {
+			child.stderr.on('data', (chunk: Buffer) => {
+				err.push(chunk);
+				bytes += chunk.length;
+				if (bytes > MAX_OUTPUT_BYTES) {
+					fail(new EngineError(`ClemToken engine output exceeded ${MAX_OUTPUT_BYTES} bytes.`));
+				}
+			});
+			// a stream 'error' with no listener reaches Node's uncaught-exception path, so a hard
+			// engine crash that breaks the pipe could take the extension host down with it. Swallow
+			// every pipe error here; `close`/`error` below report the real reason.
+			child.stdout.on('error', () => { /* reported through close */ });
+			child.stderr.on('error', () => { /* reported through close */ });
+			child.stdin.on('error', () => { /* reported through close */ });
+			child.on('error', (e) => {
+				fail(new EngineError(`Could not start the ClemToken engine: ${e.message}`));
+			});
+			child.on('close', (code, signal) => {
 				if (!finish()) {
 					return;
 				}
-				clearTimeout(timer);
 				if (code !== 0) {
-					reject(new EngineError(`ClemToken engine exited with code ${code}: ${Buffer.concat(err).toString('utf8').trim()}`));
+					const detail = Buffer.concat(err).toString('utf8').trim();
+					const reason = signal ? `signal ${signal}` : `code ${code}`;
+					reject(new EngineError(`ClemToken engine exited with ${reason}${detail ? `: ${detail}` : ''}`));
 					return;
 				}
 				try {
-					const parsed = JSON.parse(Buffer.concat(out).toString('utf8')) as TokenSet;
-					if (parsed.schema !== SCHEMA) {
-						reject(new EngineError(`Unexpected engine payload: schema "${parsed.schema}".`));
-						return;
-					}
-					if (parsed.version > VERSION) {
-						reject(new EngineError(`Engine speaks ${SCHEMA} v${parsed.version}, this extension understands v${VERSION}.`));
-						return;
-					}
-					resolve(parsed);
+					resolve(JSON.parse(Buffer.concat(out).toString('utf8')) as { schema?: string; version?: number });
 				} catch (e) {
 					reject(new EngineError(`Could not read the engine output: ${(e as Error).message}`));
 				}
 			});
-			// the engine may exit before we finish writing (bad grammar), so a broken pipe is not fatal
-			child.stdin.on('error', () => { /* reported through close */ });
-			child.stdin.end(Buffer.from(text, 'utf8'));
+			try {
+				child.stdin.end(Buffer.from(text, 'utf8'));
+			} catch {
+				// the engine may already be gone; `close` reports it
+			}
 		});
 	}
 
 	dispose(): void {
 		for (const child of this.children) {
-			child.kill();
+			kill(child);
 		}
 		this.children.clear();
-		this.cache.clear();
+		this.tokenCache.clear();
+		this.statsCache.clear();
 	}
 }

@@ -21,6 +21,18 @@
   "main": "./dist/extension.js",
   "license": "SEE LICENSE IN LICENSE",
   "contributes": {
+    "commands": [
+      {
+        "command": "clemtoken.showGrammarStats",
+        "title": "ClemToken: Show Grammar Stats",
+        "enablement": "editorLangId == clemtoken"
+      },
+      {
+        "command": "clemtoken.profileGrammar",
+        "title": "ClemToken: Profile Grammar",
+        "enablement": "editorLangId == clemtoken"
+      }
+    ],
     "languages": [
       {
         "id": "clemtoken",
@@ -191,6 +203,32 @@
         "type": "string",
         "default": "#CE9178",
         "description": "String color"
+      },
+      "clemtoken.bracketColors": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "#FFD700",
+          "#DA70D6",
+          "#179FFF",
+          "#00C957",
+          "#FF7F50",
+          "#40E0D0"
+        ],
+        "description": "Colors for group parentheses, cycled by nesting depth. An empty list turns the rainbow off."
+      },
+      "clemtoken.showCodeLens": {
+        "type": "boolean",
+        "default": true,
+        "description": "Show a reference count above each rule definition, as a shortcut to Find References."
+      },
+      "clemtoken.statsDebounceMs": {
+        "type": "number",
+        "default": 1200,
+        "minimum": 0,
+        "description": "Delay before grammar stats are computed after an edit. A hover or command computes them immediately when they are stale."
       }
     }
   },

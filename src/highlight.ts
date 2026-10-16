@@ -15,7 +15,28 @@ export interface Anchor {
 	name: string;
 }
 
-/** One decoration bucket per coloured element, plus the anchors the language providers need. */
+/** A `(` or `)`, with its paren nesting depth (0-based) so the colours can cycle. */
+export interface Bracket extends Span {
+	depth: number;
+}
+
+/** A `$name: body` spec declaration, as written in the grammar. */
+export interface Spec {
+	name: string;
+	/** the `$name:` declaration, without the body */
+	line: number;
+	column: number;
+	size: number;
+	/** the name alone, for hover */
+	nameColumn: number;
+	nameSize: number;
+	/** the body after `$name:` */
+	body: string;
+	bodyColumn: number;
+	bodySize: number;
+}
+
+/** One decoration bucket per coloured element, plus the anchors and specs the language providers need. */
 export interface Analysis {
 	title: Span[];
 	keyword: Span[];
@@ -30,8 +51,13 @@ export interface Analysis {
 	specRegex: Span[];
 	lookahead: Span[];
 	lookaheadText: Span[];
+	/** group parentheses, for the rainbow colouring; `[` `]` keep their own colours */
+	brackets: Bracket[];
 	definitions: Anchor[];
 	references: Anchor[];
+	specs: Spec[];
+	/** the engine's tokens in source order, for position lookup (hover, CodeLens) */
+	tokens: SyntaxToken[];
 }
 
 const empty = (): Analysis => ({
@@ -48,8 +74,11 @@ const empty = (): Analysis => ({
 	specRegex: [],
 	lookahead: [],
 	lookaheadText: [],
+	brackets: [],
 	definitions: [],
 	references: [],
+	specs: [],
+	tokens: [],
 });
 
 /**
@@ -96,6 +125,8 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 	// lookahead nested inside another.
 	let lookaheadDepth = 0;
 	let lookaheadLine = -1;
+	// paren nesting for the rainbow colours; only `(`/`)` count, `[`/`$[` have their own colours
+	let bracketDepth = 0;
 
 	for (let index = 0; index < ordered.length; index++) {
 		const token = ordered[index];
@@ -115,6 +146,13 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 
 		const value = glyph(token);
 		const before = index > 0 ? ordered[index - 1] : undefined;
+
+		if (value === '(') {
+			result.brackets.push({ ...span, depth: bracketDepth++ });
+		} else if (value === ')') {
+			bracketDepth = Math.max(0, bracketDepth - 1);
+			result.brackets.push({ ...span, depth: bracketDepth });
+		}
 
 		switch (token.rule) {
 			case 'commentline':
@@ -201,7 +239,7 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 				break;
 
 			case 'group':
-				// `prefix(name)`: the parens stay default, as before
+				// `prefix(name)`: the parens go to the rainbow layer, the label and `:` here
 				if (value === 'word') {
 					result.name.push(span);
 				} else if (value === ':') {
@@ -245,6 +283,7 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 				break;
 		}
 	}
+	result.tokens = ordered;
 	return result;
 }
 
@@ -256,6 +295,7 @@ function addSpecLine(result: Analysis, ordered: SyntaxToken[], index: number): v
 	const rest = ordered[index];
 	let start = rest.character;
 	let colonEnd = rest.character;
+	let nameToken: SyntaxToken | undefined;
 	for (let back = index - 1; back >= 0 && ordered[back].rule === 'specline' && ordered[back].line === rest.line; back--) {
 		const token = ordered[back];
 		const value = glyph(token);
@@ -263,10 +303,25 @@ function addSpecLine(result: Analysis, ordered: SyntaxToken[], index: number): v
 			start = token.character;
 		} else if (value === ':') {
 			colonEnd = token.character + token.length;
+		} else if (token.leaf === 'word') {
+			nameToken = token;
 		}
 	}
 	if (colonEnd > start) {
 		result.spec.push({ line: rest.line, character: start, length: colonEnd - start });
+	}
+	if (nameToken !== undefined) {
+		result.specs.push({
+			name: nameToken.value,
+			line: nameToken.line,
+			column: start,
+			size: colonEnd - start,
+			nameColumn: nameToken.character,
+			nameSize: nameToken.length,
+			body: rest.value,
+			bodyColumn: rest.character,
+			bodySize: rest.value.length,
+		});
 	}
 	const modeEnd = rest.value.indexOf(':');
 	if (modeEnd !== -1 && /^\w+$/.test(rest.value.slice(0, modeEnd))) {

@@ -10,6 +10,10 @@
 			"type": "extensionHost",
 			"request": "launch",
 			"args": [
+				// keep the dev host light: without this every installed extension (C# Dev Kit, Copilot,
+				// Live Share, ...) loads there too, and the published copy of this extension shares its
+				// id with the one being developed. The development extension itself still loads.
+				"--disable-extensions",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
 			"outFiles": [

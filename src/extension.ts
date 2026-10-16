@@ -1,14 +1,23 @@
 import * as vscode from 'vscode';
-import { ClemTokenEngine } from './engine';
+import { ClemTokenEngine, GrammarStats, ParseMetrics } from './engine';
+import { collectDiagnostics } from './diagnostics';
 import { Anchor, Analysis, Span, analyze } from './highlight';
+import { provideHover } from './hover';
+import { StatsRow, StatsView } from './statsView';
+import { formatBytes, formatDuration, ruleFlags, symbolBound } from './format';
 import { ClemTokenSemanticTokensProvider, legend } from './semanticTokens';
+
+const GRAMMAR_HEADERS = ['Rule', 'Type', 'Bound', 'Flags', 'Uses'];
+const PROFILE_HEADERS = ['Rule', 'Type', 'Exec', 'Match', 'Fail', 'Alloc (incl / self)', 'Time (incl / self)', 'Value'];
 
 export function activate(context: vscode.ExtensionContext) {
 	const engine = new ClemTokenEngine(context);
 	const output = vscode.window.createOutputChannel('ClemToken');
 	context.subscriptions.push(engine, output);
 	const available = activateEngine(context, engine, output);
-	activateGrammar(context, engine, output, available);
+	const statsView = new StatsView();
+	context.subscriptions.push(statsView);
+	activateGrammar(context, engine, output, available, statsView);
 	activateAbstract(context);
 }
 
@@ -208,6 +217,8 @@ interface DecorationTypes {
 	specRegex: vscode.TextEditorDecorationType;
 	lookahead: vscode.TextEditorDecorationType;
 	lookaheadText: vscode.TextEditorDecorationType;
+	/** one type per entry in `clemtoken.bracketColors`, cycled by paren depth */
+	brackets: vscode.TextEditorDecorationType[];
 	dispose(): void;
 }
 
@@ -215,6 +226,7 @@ function createDecorationTypes(): DecorationTypes {
 	const color = (name: string, fallback: string) => vscode.window.createTextEditorDecorationType({
 		color: vscode.workspace.getConfiguration('clemtoken').get(name, fallback)
 	});
+	const bracketColors = vscode.workspace.getConfiguration('clemtoken').get<string[]>('bracketColors', []) ?? [];
 	const types = {
 		title: color('titleColor', '#02adf6ff'),
 		name: color('nameColor', '#808080'),
@@ -229,12 +241,21 @@ function createDecorationTypes(): DecorationTypes {
 		specRegex: color('specRegexColor', '#c586c0'),
 		lookahead: color('lookaheadColor', '#209b49'),
 		lookaheadText: color('lookaheadTextColor', '#31f227'),
+		brackets: bracketColors
+			.filter(entry => typeof entry === 'string' && entry.length > 0)
+			.map(entry => vscode.window.createTextEditorDecorationType({ color: entry })),
 	};
 	return {
 		...types,
 		dispose: () => {
 			for (const type of Object.values(types)) {
-				type.dispose();
+				if (Array.isArray(type)) {
+					for (const item of type) {
+						item.dispose();
+					}
+				} else {
+					type.dispose();
+				}
 			}
 		},
 	};
@@ -244,15 +265,31 @@ function createDecorationTypes(): DecorationTypes {
  * Decoration layer. The ranges come from the parser (see highlight.ts); the colours are the
  * extension's own and are what the `clemtoken.*Color` settings drive.
  */
-function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngine, output: vscode.OutputChannel, available: boolean) {
+function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngine, output: vscode.OutputChannel, available: boolean, statsView: StatsView) {
 	let types = createDecorationTypes();
 	context.subscriptions.push({ dispose: () => types.dispose() });
+	const diagnostics = vscode.languages.createDiagnosticCollection('clemtoken');
+	context.subscriptions.push(diagnostics, vscode.workspace.onDidCloseTextDocument(document => diagnostics.delete(document.uri)));
+
+	/** Logging must never throw: these run from timers and providers where a throw can escape. */
+	const report = (message: string): void => {
+		try {
+			output.appendLine(message);
+		} catch {
+			// the channel is already gone
+		}
+	};
 
 	// what the language providers read: definitions are `@name:` rule lines, references are uses of
 	// them elsewhere. A reference with no definition is offered by completion as a new anchor.
 	let definitions: Anchor[] = [];
 	let references: Anchor[] = [];
 	let uncreated: Anchor[] = [];
+
+	// what the hover / CodeLens / command surfaces read: the last completed analysis plus its stats
+	let current: { document: vscode.TextDocument; version: number; analysis: Analysis } | undefined;
+	let stats: GrammarStats | undefined;
+	let statsVersion = -1;
 
 	let activeEditor = vscode.window.activeTextEditor;
 	let pending: NodeJS.Timeout | undefined;
@@ -267,24 +304,45 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		}, 150);
 	};
 
+	// stats are for reading, not typing: a longer debounce than the colours, and `ensureStats`
+	// flushes it when a hover or command needs the numbers now
+	let statsTimer: NodeJS.Timeout | undefined;
+	const statsDelay = () => Math.max(0, vscode.workspace.getConfiguration('clemtoken').get<number>('statsDebounceMs', 1200));
+	const scheduleStats = () => {
+		if (!available) return;
+		if (statsTimer !== undefined) {
+			clearTimeout(statsTimer);
+		}
+		statsTimer = setTimeout(() => {
+			statsTimer = undefined;
+			void loadStats();
+		}, statsDelay());
+	};
+
+	const codeLenses = new vscode.EventEmitter<void>();
+	context.subscriptions.push(codeLenses);
+
 	vscode.window.onDidChangeActiveTextEditor(editor => {
 		activeEditor = editor;
-		updateDecorations();
+		void updateDecorations();
+		scheduleStats();
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeTextDocument(event => {
 		if (activeEditor && event.document === activeEditor.document) {
 			schedule();
+			scheduleStats();
 		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeConfiguration(event => {
 		if (!event.affectsConfiguration('clemtoken')) return;
 		types.dispose();
 		types = createDecorationTypes();
-		updateDecorations();
+		void updateDecorations();
+		codeLenses.fire();
 	}, null, context.subscriptions);
 	vscode.languages.onDidChangeDiagnostics(event => {
 		if (activeEditor && event.uris.includes(activeEditor.document.uri)) {
-			updateDecorations();
+			void updateDecorations();
 		}
 	}, null, context.subscriptions);
 
@@ -371,6 +429,75 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 	}, '@', '$');
 	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider, cProvider);
 
+	const hoverProvider = vscode.languages.registerHoverProvider({ language: 'clemtoken' }, {
+		async provideHover(document, position) {
+			await ensureModel(document);
+			if (current === undefined || current.version !== document.version) return undefined;
+			await ensureStats();
+			return provideHover(document, current.analysis, stats, position);
+		}
+	});
+	const codeLensProvider = vscode.languages.registerCodeLensProvider({ language: 'clemtoken' }, {
+		onDidChangeCodeLenses: codeLenses.event,
+		provideCodeLenses(document) {
+			if (!vscode.workspace.getConfiguration('clemtoken').get('showCodeLens', true)) return [];
+			const model = current;
+			if (model === undefined || model.version !== document.version) return [];
+			const lenses: vscode.CodeLens[] = [];
+			for (const definition of model.analysis.definitions) {
+				const count = model.analysis.references.reduce((total, ref) => ref.name === definition.name ? total + 1 : total, 0);
+				if (count === 0) continue;
+				const range = new vscode.Range(definition.line, definition.column, definition.line, definition.column + definition.size);
+				lenses.push(new vscode.CodeLens(range, {
+					title: `${count} reference${count === 1 ? '' : 's'}`,
+					command: 'clemtoken.showReferences',
+					arguments: [document.uri, new vscode.Position(definition.line, definition.column)],
+				}));
+			}
+			return lenses;
+		}
+	});
+	context.subscriptions.push(hoverProvider, codeLensProvider);
+
+	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+	status.command = 'clemtoken.showGrammarStats';
+	context.subscriptions.push(status);
+	updateStatusBar();
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('clemtoken.showGrammarStats', async () => {
+			const editor = activeEditor;
+			if (!editor || editor.document.languageId !== 'clemtoken') return;
+			await ensureModel(editor.document);
+			await ensureStats();
+			if (current === undefined || stats === undefined || current.version !== editor.document.version) {
+				void vscode.window.showWarningMessage('ClemToken: no stats, the grammar has errors.');
+				return;
+			}
+			statsView.showGrammar(fileName(current.document), GRAMMAR_HEADERS, grammarRows(current.analysis, stats));
+		}),
+		vscode.commands.registerCommand('clemtoken.profileGrammar', async () => {
+			const editor = activeEditor;
+			if (!editor || editor.document.languageId !== 'clemtoken') return;
+			if (!available) return;
+			try {
+				const metrics = await engine.profile(editor.document.getText());
+				statsView.showProfile(fileName(editor.document), PROFILE_HEADERS, profileRows(metrics));
+			} catch (e) {
+				report(`Profile failed for ${editor.document.uri.fsPath}: ${(e as Error).message}`);
+				void vscode.window.showWarningMessage('ClemToken: could not profile the grammar. See the ClemToken output.');
+			}
+		}),
+		vscode.commands.registerCommand('clemtoken.showReferences', async (uri: vscode.Uri, position: vscode.Position) => {
+			const locations = await vscode.commands.executeCommand<vscode.Location[] | undefined>('vscode.executeReferenceProvider', uri, position);
+			if (locations === undefined || locations.length === 0) return;
+			await vscode.commands.executeCommand('editor.action.showReferences', uri, position, locations);
+		}),
+		vscode.commands.registerCommand('clemtoken.revealDefinition', (uri: string, line: number, column: number) => {
+			void vscode.window.showTextDocument(vscode.Uri.parse(uri), { selection: new vscode.Range(line, column, line, column) });
+		}),
+	);
+
 	/** Clip to the document: a range the builder/editor would reject is dropped, not thrown. */
 	const spans = (document: vscode.TextDocument, list: Span[]): vscode.DecorationOptions[] => {
 		const options: vscode.DecorationOptions[] = [];
@@ -398,8 +525,11 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			if (version !== document.version || activeEditor !== editor) return;
 			const analysis: Analysis = analyze(text, set.tokens);
 			apply(editor, document, analysis);
+			diagnostics.set(document.uri, collectDiagnostics(analysis));
+			current = { document, version, analysis };
+			codeLenses.fire();
 		} catch (e) {
-			output.appendLine(`Highlighting failed for ${document.uri.fsPath}: ${(e as Error).message}`);
+			report(`Highlighting failed for ${document.uri.fsPath}: ${(e as Error).message}`);
 		}
 	}
 
@@ -417,13 +547,130 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		editor.setDecorations(types.specRegex, spans(document, analysis.specRegex));
 		editor.setDecorations(types.lookahead, spans(document, analysis.lookahead));
 		editor.setDecorations(types.lookaheadText, spans(document, analysis.lookaheadText));
+		const bracketCount = types.brackets.length;
+		for (let index = 0; index < bracketCount; index++) {
+			const list = analysis.brackets.filter(bracket => bracket.depth % bracketCount === index);
+			editor.setDecorations(types.brackets[index], spans(document, list));
+		}
 		definitions = analysis.definitions;
 		const known = new Set(definitions.map(entry => entry.name));
 		references = analysis.references.filter(entry => known.has(entry.name));
 		uncreated = analysis.references.filter(entry => !known.has(entry.name));
 	}
 
-	updateDecorations();
+	/** Make sure `current` reflects `document` at its latest version, flushing the pending highlight run. */
+	async function ensureModel(document: vscode.TextDocument): Promise<void> {
+		if (current !== undefined && current.document === document && current.version === document.version) return;
+		if (activeEditor === undefined || activeEditor.document !== document) return;
+		if (pending !== undefined) {
+			clearTimeout(pending);
+			pending = undefined;
+		}
+		await updateDecorations();
+	}
+
+	function loadStats(): Promise<void> {
+		const editor = activeEditor;
+		if (!editor || editor.document.languageId !== 'clemtoken' || !available) {
+			updateStatusBar();
+			return Promise.resolve();
+		}
+		const document = editor.document;
+		const version = document.version;
+		return engine.grammarStats(document.getText(), document.uri.toString(), version).then(
+			(result) => {
+				if (activeEditor?.document !== document || document.version !== version) return;
+				stats = result;
+				statsVersion = version;
+			},
+			(error: Error) => {
+				if (activeEditor?.document !== document || document.version !== version) return;
+				stats = undefined;
+				statsVersion = version;
+				report(`Grammar stats unavailable for ${document.uri.fsPath}: ${error.message}`);
+			},
+		).then(() => {
+			updateStatusBar();
+			if (statsView.showing === 'grammar') {
+				refreshGrammarPanel();
+			}
+			codeLenses.fire();
+		}).catch((error: Error) => {
+			// the panel/status refresh threw; keep the extension host alive and record why
+			report(`Stats refresh failed: ${error.message}`);
+		});
+	}
+
+	/** Stats for the current version, running them now if the debounce has not fired yet. */
+	async function ensureStats(): Promise<void> {
+		const editor = activeEditor;
+		if (!editor || editor.document.languageId !== 'clemtoken') return;
+		if (statsVersion === editor.document.version) return;
+		if (statsTimer !== undefined) {
+			clearTimeout(statsTimer);
+			statsTimer = undefined;
+		}
+		await loadStats();
+	}
+
+	function refreshGrammarPanel(): void {
+		const model = current;
+		if (model === undefined || stats === undefined || statsVersion !== model.version) return;
+		statsView.showGrammar(fileName(model.document), GRAMMAR_HEADERS, grammarRows(model.analysis, stats));
+	}
+
+	function updateStatusBar(): void {
+		const editor = activeEditor;
+		const model = current;
+		if (!editor || editor.document.languageId !== 'clemtoken' || !available || stats === undefined || model === undefined || statsVersion !== model.version) {
+			status.hide();
+			return;
+		}
+		status.text = `$(symbol-structure) ${stats.ruleCount} rules · ${stats.counts.nodes} nodes`;
+		const md = new vscode.MarkdownString();
+		md.appendMarkdown(`**Grammar**\n\n`);
+		md.appendMarkdown(`${stats.ruleCount} rules, ${stats.specCount} specs, ${stats.counts.nodes} nodes\n\n`);
+		md.appendMarkdown(`simple ${stats.counts.simple} · reserved ${stats.counts.reserved} · group ${stats.counts.group} · reference ${stats.counts.reference} · anchor ${stats.counts.anchor} · optional ${stats.counts.optional} · lookahead ${stats.counts.lookahead} · empty ${stats.counts.empty}\n\n`);
+		md.appendMarkdown(`Total ${symbolBound(stats.total.low, stats.total.high)} symbols`);
+		status.tooltip = md;
+		status.show();
+	}
+
+	function grammarRows(analysis: Analysis, stats: GrammarStats): StatsRow[] {
+		return stats.rules.map((rule) => {
+			const uses = analysis.references.reduce((total, ref) => ref.name === rule.name ? total + 1 : total, 0);
+			return {
+				cells: [rule.name, rule.type, symbolBound(rule.low, rule.high), ruleFlags(rule).join(', '), String(uses)],
+				tone: rule.unproductive ? 'bad' as const : undefined,
+			};
+		});
+	}
+
+	function profileRows(metrics: ParseMetrics): StatsRow[] {
+		const rows: StatsRow[] = metrics.rules.map((rule) => ({
+			cells: [
+				rule.name,
+				rule.type,
+				String(rule.executions),
+				String(rule.matches),
+				String(rule.failures),
+				`${formatBytes(rule.allocatedBytes)} / ${formatBytes(rule.selfAllocatedBytes)}`,
+				`${formatDuration(rule.totalMs)} / ${formatDuration(rule.selfMs)}`,
+				rule.value ?? '',
+			],
+		}));
+		rows.push({ cells: ['Other (non-rule)', '', '', '', '', formatBytes(metrics.unattributedAllocatedBytes), formatDuration(metrics.unattributedElapsedMs), ''], tone: 'muted' });
+		rows.push({ cells: ['TOTAL', '', '', '', '', formatBytes(metrics.totalAllocatedBytes), formatDuration(metrics.totalElapsedMs), ''], tone: 'muted' });
+		return rows;
+	}
+
+	void updateDecorations();
+	scheduleStats();
+}
+
+/** Just the base name of a document, for panel subtitles. */
+function fileName(document: vscode.TextDocument): string {
+	return document.uri.path.split('/').pop() || document.uri.fsPath;
 }
 
 export function deactivate() { }
