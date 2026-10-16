@@ -9,9 +9,11 @@
 // real Linux kernel; scripts/setup-wsl.sh installs the toolchain it needs. The shipped grammar is
 // compiled with the freshly built engine, so the binary and dsl.cta can never drift apart.
 //
-// Only one platform is ever left in ./bin, so a per-target VSIX cannot pick up another one's engine.
+// Platforms accumulate in ./bin instead of replacing each other: the extension ships as one
+// universal package holding every engine this host can build, and picks its own folder at runtime.
+// Staging nothing but your own platform therefore cannot silently ship the wrong engine.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const args = process.argv.slice(2);
@@ -48,12 +50,6 @@ if (!existsSync(project)) {
 
 rmSync(join('bin', '.staging'), { recursive: true, force: true });
 mkdirSync('bin', { recursive: true });
-// a per-target VSIX must never carry another platform's engine
-for (const entry of readdirSync('bin')) {
-  if (/^(win32|linux|darwin)-/.test(entry)) {
-    rmSync(join('bin', entry), { recursive: true, force: true });
-  }
-}
 
 if (target === HOST) {
   stageNatively();

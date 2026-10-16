@@ -21,6 +21,15 @@ function activateEngine(context: vscode.ExtensionContext, engine: ClemTokenEngin
 	if (!engine.available) {
 		output.appendLine(`No engine binary for ${engine.target}. Parser-driven highlighting is off.`);
 		output.appendLine('Run "node scripts/stage-engine.mjs" from the extension root, or point "clemtoken.enginePath" at an engine.');
+		// The package carries an engine per platform, so a missing one usually means this is a platform
+		// it does not build for rather than a broken install. Say so where the user will see it: an
+		// unhighlighted file with a note buried in an output channel reads as a bug in the extension.
+		const bundled = engine.bundledTargets;
+		if (bundled.length > 0 && !bundled.includes(engine.target)) {
+			void vscode.window.showWarningMessage(
+				`ClemToken Highlighter does not support ${engine.platformName()} yet, so highlighting is off.`
+			);
+		}
 		return false;
 	}
 	output.appendLine(`Engine: ${engine.resolveBinary()}`);

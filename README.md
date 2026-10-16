@@ -10,8 +10,10 @@ the outline and anchor completion.
 ## Engine
 
 A small self-contained ClemToken engine ships inside the extension and runs once per edit to turn
-the document into tokens. Separate builds are published for Windows and for Linux, so only the one
-you need is downloaded.
+the document into tokens. The extension is published as a single package carrying a build per
+supported platform, and runs whichever one matches the platform it finds itself on.
+
+Windows and Linux on x64 are the platforms built today. macOS is not supported.
 
 If highlighting does not appear, the `ClemToken` output channel says why. Setting
 `clemtoken.enginePath` points the extension at a different engine binary, which is handy while
@@ -26,24 +28,23 @@ the Linux toolchain once (only needed on Windows, where the Linux build runs ins
 ```
 bash scripts/setup-wsl.sh                      # once, from inside WSL2
 
-node scripts/publish.mjs --package             # every VSIX this machine can build
-node scripts/publish.mjs                       # stage, then publish each target (needs VSCE_PAT)
-node scripts/publish.mjs --target linux-x64    # one target only
+node scripts/publish.mjs --package             # one package with every engine this machine can build
+node scripts/publish.mjs                       # stage, then publish (needs VSCE_PAT)
 ```
 
 `stage-engine.mjs` is the lower-level step, for when you just want an engine to run the extension
-from source:
+from source. Staged platforms accumulate instead of replacing each other, so building a second one
+does not disturb the first:
 
 ```
 node scripts/stage-engine.mjs                  # this machine's platform
 node scripts/stage-engine.mjs --target linux-x64
 ```
 
-Staging a platform clears any other out of `bin/`, and `publish.mjs` stages each target immediately
-before packaging it, so a VSIX always carries its own engine. Doing that by hand in the wrong order
-produces a Windows package containing the Linux binary, which nothing downstream rejects.
+`publish.mjs` stages every engine this host can build and then packages them together, so there is no
+pairing to get wrong: one package cannot end up carrying an engine meant for a different platform.
 
-A VSIX packaged on Windows loses the POSIX executable bit, which the extension restores on first
+A package built on Windows loses the POSIX executable bit, which the extension restores on first
 use, so the Linux build does not need a Linux build host either.
 
 The Linux binary runs on any glibc 2.34 or newer distro and deliberately does not need `libicu` -

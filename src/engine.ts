@@ -40,7 +40,7 @@ export class ClemTokenEngine implements vscode.Disposable {
 
 	constructor(private readonly context: vscode.ExtensionContext) { }
 
-	/** Platform folder a per-target VSIX ships, e.g. `win32-x64`. */
+	/** Platform folder this build ships for, e.g. `win32-x64`. */
 	get target(): string {
 		return `${process.platform}-${process.arch}`;
 	}
@@ -97,6 +97,29 @@ export class ClemTokenEngine implements vscode.Disposable {
 
 	get available(): boolean {
 		return this.resolveBinary() !== undefined && fs.existsSync(this.resolveGrammar());
+	}
+
+	/**
+	 * Targets this build bundles an engine for, read from `bin/`.
+	 *
+	 * The package is universal, so it carries a folder per platform. Reading them back means the
+	 * unpacked contents decide what is supported and a hardcoded table cannot drift from them.
+	 */
+	get bundledTargets(): string[] {
+		try {
+			return fs.readdirSync(path.join(this.context.extensionUri.fsPath, 'bin'), { withFileTypes: true })
+				.filter((entry) => entry.isDirectory() && /^(win32|linux|darwin)-/.test(entry.name))
+				.map((entry) => entry.name);
+		} catch {
+			return [];
+		}
+	}
+
+	/** A target as a person would say it, for messages that get shown rather than logged. */
+	platformName(): string {
+		const [platform, arch] = this.target.split('-');
+		const name = platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : platform === 'linux' ? 'Linux' : platform;
+		return arch === 'x64' ? name : `${name} on ${arch}`;
 	}
 
 	/**

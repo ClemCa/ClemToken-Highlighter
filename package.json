@@ -9,7 +9,7 @@
   },
   "version": "1.5.0",
   "engines": {
-    "vscode": "^1.103.0"
+    "vscode": "^1.140.0"
   },
   "categories": [
     "Programming Languages",
@@ -119,8 +119,8 @@
       },
       "clemtoken.keywordColor": {
         "type": "string",
-        "default": "#4EC9B0",
-        "description": "Keyword color"
+        "default": "#4a9d4cff",
+        "description": "Reserved spec name color, the part inside $[...]"
       },
       "clemtoken.nameColor": {
         "type": "string",
@@ -183,11 +183,18 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
-    "@types/vscode": "1.103.0",
-    "@vscode/test-cli": "0.0.11",
-    "@vscode/test-electron": "2.5.2",
+    "@types/node": "^20.19.43",
+    "@types/vscode": "1.140.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
     "esbuild": "^0.25.9",
-    "typescript": "5.9.2"
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "esbuild@0.25.9": true
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.1.2"
   }
 }

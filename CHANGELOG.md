@@ -16,6 +16,8 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - Removed an invalid `capabilities` block from the manifest
 - Fixed `.cta` highlighting never refreshing on edit, document symbols accumulating stale entries,
   and folding ranges throwing on files whose last line is not `)`
+- macOS is not supported; the extension now says so on startup instead of highlighting nothing
+- Fixed the reserved spec name inside `$[...]` being coloured the same as its own brackets
 
 ## [1.4.12] - 2026-02-03
 
