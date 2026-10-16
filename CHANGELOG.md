@@ -18,6 +18,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   and folding ranges throwing on files whose last line is not `)`
 - macOS is not supported; the extension now says so on startup instead of highlighting nothing
 - Fixed the reserved spec name inside `$[...]` being coloured the same as its own brackets
+- Added settings for the spec and lookahead colors, which were missing from the manifest
 
 ## [1.4.12] - 2026-02-03
 

@@ -152,6 +152,31 @@
         "default": "#FFB6C1",
         "description": "Optional color"
       },
+      "clemtoken.specColor": {
+        "type": "string",
+        "default": "#dcdcaa",
+        "description": "Spec declaration color, the $target: part of a spec line"
+      },
+      "clemtoken.specModeColor": {
+        "type": "string",
+        "default": "#9cdcfe",
+        "description": "Spec mode color, the mode part of $target:mode:regex"
+      },
+      "clemtoken.specRegexColor": {
+        "type": "string",
+        "default": "#c586c0",
+        "description": "Spec regex color, the body of a spec line"
+      },
+      "clemtoken.lookaheadColor": {
+        "type": "string",
+        "default": "#209b49",
+        "description": "Lookahead marker color, the @>> of a lookahead"
+      },
+      "clemtoken.lookaheadTextColor": {
+        "type": "string",
+        "default": "#31f227",
+        "description": "Lookahead probe color, the body inside a lookahead"
+      },
       "clemtoken-abstract.fieldColor": {
         "type": "string",
         "default": "#4a9d4cff",
