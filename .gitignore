@@ -1,5 +1,8 @@
 *.vsix
 
+# staged engine binaries + compiled grammar (built by scripts/stage-engine.mjs)
+bin/
+
 # Logs
 logs
 *.log

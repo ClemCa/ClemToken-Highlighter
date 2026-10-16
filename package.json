@@ -1,28 +1,25 @@
 {
   "name": "clemtoken-highlighter",
   "displayName": "ClemToken Highlighter",
-  "description": "Syntax higlighting for the unreleased ClemToken grammar DSL",
+  "description": "Syntax highlighting for the unreleased ClemToken grammar DSL",
   "publisher": "ClemCa",
   "repository": {
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.4.12",
+  "version": "1.5.0",
   "engines": {
     "vscode": "^1.103.0"
   },
   "categories": [
+    "Programming Languages",
     "Other"
   ],
   "activationEvents": [
     "onLanguage:clemtoken"
   ],
   "main": "./dist/extension.js",
-  "capabilities": {
-    "documentSymbolProvider": "true",
-    "definitionProvider": "true",
-    "referencesProvider": "true"
-  },
+  "license": "SEE LICENSE IN LICENSE",
   "contributes": {
     "languages": [
       {
@@ -44,6 +41,28 @@
           "ClemToken Abstract",
           "clemtoken-abstract"
         ]
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "clemtoken",
+        "scopes": {
+          "comment": [
+            "comment"
+          ],
+          "keyword": [
+            "keyword"
+          ],
+          "variable": [
+            "variable"
+          ],
+          "regexp": [
+            "string.regexp"
+          ],
+          "operator": [
+            "keyword.operator"
+          ]
+        }
       }
     ],
     "configurationDefaults": {
@@ -88,6 +107,11 @@
   "configuration": {
     "title": "ClemToken Highlighter",
     "properties": {
+      "clemtoken.enginePath": {
+        "type": "string",
+        "default": "",
+        "description": "Path to a ClemToken engine binary. Empty uses the one bundled with the extension."
+      },
       "clemtoken.selectorColor": {
         "type": "string",
         "default": "#4EC9B0",
@@ -152,7 +176,10 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "vscode:prepublish": "npm run package",
-    "package": "npm run check-types && node esbuild.js --production"
+    "package": "npm run check-types && node esbuild.js --production",
+    "stage-engine": "node scripts/stage-engine.mjs",
+    "release": "node scripts/publish.mjs",
+    "release:package": "node scripts/publish.mjs --package"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

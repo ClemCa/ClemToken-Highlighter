@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# These run under bash inside WSL, where a carriage return becomes part of the command name
+*.sh text eol=lf

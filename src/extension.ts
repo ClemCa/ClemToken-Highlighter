@@ -1,8 +1,38 @@
 import * as vscode from 'vscode';
+import { ClemTokenEngine } from './engine';
+import { Anchor, Analysis, Span, analyze } from './highlight';
+import { ClemTokenSemanticTokensProvider, legend } from './semanticTokens';
 
 export function activate(context: vscode.ExtensionContext) {
-	activateGrammar(context);
+	const engine = new ClemTokenEngine(context);
+	const output = vscode.window.createOutputChannel('ClemToken');
+	context.subscriptions.push(engine, output);
+	const available = activateEngine(context, engine, output);
+	activateGrammar(context, engine, output, available);
 	activateAbstract(context);
+}
+
+/**
+ * Parser-driven layer: the bundled engine owns the token boundaries, so highlighting follows the
+ * grammar rather than a regex approximation. It is additive on purpose - the decoration layer in
+ * activateGrammar keeps the ClemToken-specific colours and wins wherever the two overlap.
+ */
+function activateEngine(context: vscode.ExtensionContext, engine: ClemTokenEngine, output: vscode.OutputChannel): boolean {
+	if (!engine.available) {
+		output.appendLine(`No engine binary for ${engine.target}. Parser-driven highlighting is off.`);
+		output.appendLine('Run "node scripts/stage-engine.mjs" from the extension root, or point "clemtoken.enginePath" at an engine.');
+		return false;
+	}
+	output.appendLine(`Engine: ${engine.resolveBinary()}`);
+	output.appendLine(`Grammar: ${engine.resolveGrammar()}`);
+	context.subscriptions.push(
+		vscode.languages.registerDocumentSemanticTokensProvider(
+			{ language: 'clemtoken' },
+			new ClemTokenSemanticTokensProvider(engine, (message) => output.appendLine(message)),
+			legend
+		)
+	);
+	return true;
 }
 
 function activateAbstract(context: vscode.ExtensionContext) {
@@ -28,7 +58,7 @@ function activateAbstract(context: vscode.ExtensionContext) {
 		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeTextDocument(event => {
-		if (event.document.languageId) return;
+		if (event.document.languageId !== 'clemtoken-abstract') return;
 		if (activeEditor && event.document === activeEditor.document) {
 			updateDecorations();
 		}
@@ -66,7 +96,7 @@ function activateAbstract(context: vscode.ExtensionContext) {
 	const foldingRangeProvider = vscode.languages.registerFoldingRangeProvider("clemtoken-abstract", {
 		provideFoldingRanges(document, context, token) {
 			function GetFoldingRanges(line: number, depth: number): [vscode.FoldingRange[], number] {
-				if (line > document.lineCount) return [[], line];
+				if (line >= document.lineCount) return [[], line];
 				const text = document.lineAt(line).text;
 				if (text.trimStart().startsWith(')')) {
 					return [[], line];
@@ -90,6 +120,10 @@ function activateAbstract(context: vscode.ExtensionContext) {
 		if (!activeEditor) return;
 		const lang = activeEditor.document.languageId;
 		if (lang !== "clemtoken-abstract") return;
+		// rebuilt each pass: the symbol provider reads these two arrays, so they must not accumulate
+		// stale entries across edits - and they keep their identity, since the closure captures them
+		fields.length = 0;
+		strings.length = 0;
 		const fdecorations = [] as vscode.DecorationOptions[];
 		const cDecorations = [] as vscode.DecorationOptions[];
 		const sDecorations = [] as vscode.DecorationOptions[];
@@ -150,78 +184,93 @@ function abstractDecorationsFromLine(document: vscode.TextDocument, line: string
 	}
 }
 
-function activateGrammar(context: vscode.ExtensionContext) {
-	const keywordColor = vscode.workspace.getConfiguration('clemtoken').get('keywordColor', '#4a9d4cff');
-	const selectorColor = vscode.workspace.getConfiguration('clemtoken').get('selectorColor', '#4EC9B0');
-	const nameColor = vscode.workspace.getConfiguration('clemtoken').get('nameColor', '#808080');
-	const affixColor = vscode.workspace.getConfiguration('clemtoken').get('affixColor', '#FF69B4');
-	const titleColor = vscode.workspace.getConfiguration('clemtoken').get('titleColor', '#02adf6ff');
-	const anchorColor = vscode.workspace.getConfiguration('clemtoken').get('anchorColor', '#569CD6');
-	const anchorBaseColor = vscode.workspace.getConfiguration('clemtoken').get('anchorBaseColor', '#8eb5d4ff');
-	const optionalColor = vscode.workspace.getConfiguration('clemtoken').get('optionalColor', '#FFB6C1');
-	const specColor = vscode.workspace.getConfiguration('clemtoken').get('specColor', '#dcdcaa');
-	const specModeColor = vscode.workspace.getConfiguration('clemtoken').get('specModeColor', '#9cdcfe');
-	const specRegexColor = vscode.workspace.getConfiguration('clemtoken').get('specRegexColor', '#c586c0');
-	const lookaheadColor = vscode.workspace.getConfiguration('clemtoken').get('lookaheadColor', '#209b49');
-	const lookaheadTextColor = vscode.workspace.getConfiguration('clemtoken').get('lookaheadTextColor', '#31f227');
+/** The coloured decoration types, rebuilt whenever a colour setting changes. */
+interface DecorationTypes {
+	title: vscode.TextEditorDecorationType;
+	name: vscode.TextEditorDecorationType;
+	affix: vscode.TextEditorDecorationType;
+	keyword: vscode.TextEditorDecorationType;
+	selector: vscode.TextEditorDecorationType;
+	anchor: vscode.TextEditorDecorationType;
+	anchorBase: vscode.TextEditorDecorationType;
+	optional: vscode.TextEditorDecorationType;
+	spec: vscode.TextEditorDecorationType;
+	specMode: vscode.TextEditorDecorationType;
+	specRegex: vscode.TextEditorDecorationType;
+	lookahead: vscode.TextEditorDecorationType;
+	lookaheadText: vscode.TextEditorDecorationType;
+	dispose(): void;
+}
 
-	const titleDecorationType = vscode.window.createTextEditorDecorationType({
-		color: titleColor
+function createDecorationTypes(): DecorationTypes {
+	const color = (name: string, fallback: string) => vscode.window.createTextEditorDecorationType({
+		color: vscode.workspace.getConfiguration('clemtoken').get(name, fallback)
 	});
-	const nameDecorationType = vscode.window.createTextEditorDecorationType({
-		color: nameColor
-	});
-	const affixDecorationType = vscode.window.createTextEditorDecorationType({
-		color: affixColor
-	});
-	const keywordDecorationType = vscode.window.createTextEditorDecorationType({
-		color: keywordColor
-	});
-	// the $[] selector
-	const selectorDecorationType = vscode.window.createTextEditorDecorationType({
-		color: selectorColor
-	});
-	const anchorDecorationType = vscode.window.createTextEditorDecorationType({
-		color: anchorColor
-	});
-	const anchorBaseDecorationType = vscode.window.createTextEditorDecorationType({
-		color: anchorBaseColor
-	});
-	const optionalDecorationType = vscode.window.createTextEditorDecorationType({
-		color: optionalColor
-	});
-	const specDecorationType = vscode.window.createTextEditorDecorationType({
-		color: specColor
-	});
-	const specModeDecorationType = vscode.window.createTextEditorDecorationType({
-		color: specModeColor
-	});
-	const specRegexDecorationType = vscode.window.createTextEditorDecorationType({
-		color: specRegexColor
-	});
-	const lookaheadDecorationType = vscode.window.createTextEditorDecorationType({
-		color: lookaheadColor
-	});
-	const lookaheadTextDecorationType = vscode.window.createTextEditorDecorationType({
-		color: lookaheadTextColor
-	});
-	const uncreatedAnchors = [] as { line: number, column: number, size: number, name: string }[];
-	const createdAnchors = [] as { line: number, column: number, size: number, name: string }[];
-	const references = [] as { line: number, column: number, size: number, name: string }[];
+	const types = {
+		title: color('titleColor', '#02adf6ff'),
+		name: color('nameColor', '#808080'),
+		affix: color('affixColor', '#FF69B4'),
+		keyword: color('keywordColor', '#4a9d4cff'),
+		selector: color('selectorColor', '#4EC9B0'),
+		anchor: color('anchorColor', '#569CD6'),
+		anchorBase: color('anchorBaseColor', '#8eb5d4ff'),
+		optional: color('optionalColor', '#FFB6C1'),
+		spec: color('specColor', '#dcdcaa'),
+		specMode: color('specModeColor', '#9cdcfe'),
+		specRegex: color('specRegexColor', '#c586c0'),
+		lookahead: color('lookaheadColor', '#209b49'),
+		lookaheadText: color('lookaheadTextColor', '#31f227'),
+	};
+	return {
+		...types,
+		dispose: () => {
+			for (const type of Object.values(types)) {
+				type.dispose();
+			}
+		},
+	};
+}
+
+/**
+ * Decoration layer. The ranges come from the parser (see highlight.ts); the colours are the
+ * extension's own and are what the `clemtoken.*Color` settings drive.
+ */
+function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngine, output: vscode.OutputChannel, available: boolean) {
+	let types = createDecorationTypes();
+	context.subscriptions.push({ dispose: () => types.dispose() });
+
+	// what the language providers read: definitions are `@name:` rule lines, references are uses of
+	// them elsewhere. A reference with no definition is offered by completion as a new anchor.
+	let definitions: Anchor[] = [];
+	let references: Anchor[] = [];
+	let uncreated: Anchor[] = [];
+
 	let activeEditor = vscode.window.activeTextEditor;
+	let pending: NodeJS.Timeout | undefined;
+	const schedule = () => {
+		if (pending !== undefined) {
+			clearTimeout(pending);
+		}
+		// one engine run per keystroke burst; the document version guard below drops stale results
+		pending = setTimeout(() => {
+			pending = undefined;
+			void updateDecorations();
+		}, 150);
+	};
+
 	vscode.window.onDidChangeActiveTextEditor(editor => {
 		activeEditor = editor;
-		if (editor) {
-			updateDecorations();
-		}
+		updateDecorations();
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeTextDocument(event => {
 		if (activeEditor && event.document === activeEditor.document) {
-			updateDecorations();
+			schedule();
 		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeConfiguration(event => {
-		if (!activeEditor) return;
+		if (!event.affectsConfiguration('clemtoken')) return;
+		types.dispose();
+		types = createDecorationTypes();
 		updateDecorations();
 	}, null, context.subscriptions);
 	vscode.languages.onDidChangeDiagnostics(event => {
@@ -229,37 +278,29 @@ function activateGrammar(context: vscode.ExtensionContext) {
 			updateDecorations();
 		}
 	}, null, context.subscriptions);
+
+	const findReferenceAt = (position: vscode.Position): Anchor | undefined =>
+		references.find(entry => entry.line === position.line && position.character >= entry.column && position.character < entry.column + entry.size);
+	const findAnchorAt = (position: vscode.Position): Anchor | undefined =>
+		findReferenceAt(position) ?? definitions.find(entry => entry.line === position.line && position.character >= entry.column && position.character < entry.column + entry.size);
+
 	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider({ language: 'clemtoken' }, {
 		provideDocumentSymbols(document, token) {
-			var result = [...createdAnchors.map(anchor => {
-				return new vscode.DocumentSymbol(
-					anchor.name,
-					'',
-					vscode.SymbolKind.Function,
-					new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size),
-					new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size)
-				);
-			}), ...references.map(ref => {
-				return new vscode.DocumentSymbol(
-					ref.name,
-					'',
-					vscode.SymbolKind.Function,
-					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size),
-					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size)
-				);
-			})];
-			return result;
+			const symbol = (entry: Anchor) => new vscode.DocumentSymbol(
+				entry.name,
+				'',
+				vscode.SymbolKind.Function,
+				new vscode.Range(entry.line, entry.column, entry.line, entry.column + entry.size),
+				new vscode.Range(entry.line, entry.column, entry.line, entry.column + entry.size)
+			);
+			return [...definitions.map(symbol), ...references.map(symbol)];
 		}
 	});
 	const refProvider = vscode.languages.registerReferenceProvider({ language: 'clemtoken' }, {
 		provideReferences(document, position, context, token) {
-			var reference = references.find(ref => {
-				return ref.line === position.line && position.character >= ref.column && position.character < ref.column + ref.size;
-			}) ?? createdAnchors.find(anchor => {
-				return anchor.line === position.line && position.character >= anchor.column && position.character < anchor.column + anchor.size;
-			});
-			if (!reference) return null;
-			return references.filter(ref => ref.name === reference?.name).map(ref => {
+			const entry = findAnchorAt(position);
+			if (!entry) return null;
+			return references.filter(ref => ref.name === entry.name).map(ref => {
 				return new vscode.Location(
 					document.uri,
 					new vscode.Range(ref.line, ref.column, ref.line, ref.column + ref.size)
@@ -269,19 +310,14 @@ function activateGrammar(context: vscode.ExtensionContext) {
 	});
 	const dProvider = vscode.languages.registerDefinitionProvider({ language: 'clemtoken' }, {
 		provideDefinition(document, position, token) {
-			const reference = references.find(ref => {
-				return ref.line === position.line && position.character >= ref.column && position.character < ref.column + ref.size;
-			});
+			const reference = findReferenceAt(position);
 			if (!reference) return null;
-			for (const anchor of createdAnchors) {
-				if (anchor.name === reference.name) {
-					return new vscode.Location(
-						document.uri,
-						new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size)
-					);
-				}
-			}
-			return null;
+			const anchor = definitions.find(entry => entry.name === reference.name);
+			if (!anchor) return null;
+			return new vscode.Location(
+				document.uri,
+				new vscode.Range(anchor.line, anchor.column, anchor.line, anchor.column + anchor.size)
+			);
 		}
 	});
 	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
@@ -295,16 +331,15 @@ function activateGrammar(context: vscode.ExtensionContext) {
 					if (text[0] !== '@') {
 						return [];
 					}
-					return uncreatedAnchors.map(anchor => {
-						const item = new vscode.CompletionItem(anchor.name + ":", vscode.CompletionItemKind.Function);
+					return uncreated.map(anchor => {
+						const item = new vscode.CompletionItem("@" + anchor.name + ":", vscode.CompletionItemKind.Function);
 						item.range = new vscode.Range(word.start, word.end);
 						return item;
 					});
 				}
 				const preStr = text.substring(0, text.indexOf("@"));
-				return createdAnchors.map(anchor => {
-
-					const item = new vscode.CompletionItem(preStr + anchor.name, vscode.CompletionItemKind.Function);
+				return definitions.map(anchor => {
+					const item = new vscode.CompletionItem(preStr + "@" + anchor.name, vscode.CompletionItemKind.Function);
 					item.range = new vscode.Range(word.start, word.end);
 					return item;
 				});
@@ -326,502 +361,60 @@ function activateGrammar(context: vscode.ExtensionContext) {
 		}
 	}, '@', '$');
 	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider, cProvider);
-	function updateDecorations() {
-		if (!activeEditor) return;
-		const lang = activeEditor.document.languageId;
-		if (lang !== "clemtoken") return;
-		const decorations = [] as vscode.DecorationOptions[];
-		const sDecorations = [] as vscode.DecorationOptions[];
-		const nDecorations = [] as vscode.DecorationOptions[];
-		const aDecorations = [] as vscode.DecorationOptions[];
-		const tDecorations = [] as vscode.DecorationOptions[];
-		const anDecorations = [] as vscode.DecorationOptions[];
-		const anbDecorations = [] as vscode.DecorationOptions[];
-		const optDecorations = [] as vscode.DecorationOptions[];
-		const specDecorations = [] as vscode.DecorationOptions[];
-		const specmDecorations = [] as vscode.DecorationOptions[];
-		const specrDecorations = [] as vscode.DecorationOptions[];
-		const lDecorations = [] as vscode.DecorationOptions[];
-		const ltDecorations = [] as vscode.DecorationOptions[];
-		const text = activeEditor.document.getText().split(/\r?\n/);
-		const groupRegex = /^(?:(?<prefix>[^\[\(\):\+\*\-\s]+:_?|_)(?<token>\((?:(?<subgroup>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)?))|^(?:(?<post_token>\((?:(?<subgroup_post>(?:[^\[\(\):\+\*\-\s]+:_?|_)?\( .* \):?(?:\+|\?|\*|\d+(?:-\d+)?|_|:))|.)*\))(?<solo_suffix>:?(?:\+|\?|\*|\d+(?:-\d+)?|_|:)))/;
-		createdAnchors.length = 0;
-		uncreatedAnchors.length = 0;
-		references.length = 0;
-		for (let i = 0; i < text.length; i++) {
-			if (text[i].trim() === "") continue;
-			if (text[i][0] === "#") {
-				tDecorations.push({
-					range: new vscode.Range(i, 0, i, text[i].length)
-				});
-				continue;
-			}
-			decorationsFromLine(text[i], i, groupRegex, decorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-				optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
-				createdAnchors, uncreatedAnchors, references);
-		}
-		activeEditor.setDecorations(optionalDecorationType, optDecorations);
-		activeEditor.setDecorations(anchorBaseDecorationType, anbDecorations);
-		activeEditor.setDecorations(anchorDecorationType, anDecorations);
-		activeEditor.setDecorations(titleDecorationType, tDecorations);
-		activeEditor.setDecorations(keywordDecorationType, decorations);
-		activeEditor.setDecorations(selectorDecorationType, sDecorations); // not used in V2
-		activeEditor.setDecorations(nameDecorationType, nDecorations);
-		activeEditor.setDecorations(affixDecorationType, aDecorations);
-		activeEditor.setDecorations(specDecorationType, specDecorations);
-		activeEditor.setDecorations(specModeDecorationType, specmDecorations);
-		activeEditor.setDecorations(specRegexDecorationType, specrDecorations);
-		activeEditor.setDecorations(lookaheadDecorationType, lDecorations);
-		activeEditor.setDecorations(lookaheadTextDecorationType, ltDecorations);
-		for (let i = uncreatedAnchors.length - 1; i >= 0; i--) {
-			let found = false;
-			for (let j = 0; j < createdAnchors.length; j++) {
-				if (createdAnchors[j].name == uncreatedAnchors[i].name) {
-					found = true;
-					break;
-				}
-			}
-			if (found) {
-				references.push(...uncreatedAnchors.splice(i, 1));
-			}
-		}
-	}
-}
-function decorationsFromLine(
-	lineText: string,
-	lineNumber: number,
-	groupRegex: RegExp,
-	wDecorations: vscode.DecorationOptions[], // word inside selector decorations
-	sDecorations: vscode.DecorationOptions[], // selector decorations
-	nDecorations: vscode.DecorationOptions[], // name decorations
-	aDecorations: vscode.DecorationOptions[], // affix decorations
-	anDecorations: vscode.DecorationOptions[], // anchor decorations
-	anbDecorations: vscode.DecorationOptions[], // anchor base decorations
-	optDecorations: vscode.DecorationOptions[], // optional decorations
-	specDecorations: vscode.DecorationOptions[], // spec decorations
-	specmDecorations: vscode.DecorationOptions[], // spec mode decorations
-	specrDecorations: vscode.DecorationOptions[], // spec regex decorations
-	lDecorations: vscode.DecorationOptions[] = [], // lookahead decorations
-	ltDecorations: vscode.DecorationOptions[] = [], // lookahead text decorations
-	createdAnchors: { line: number, column: number, size: number, name: string }[],
-	uncreatedAnchors: { line: number, column: number, size: number, name: string }[],
-	references: { line: number, column: number, size: number, name: string }[],
-	offset: number = 0
-) {
-	if (lineText.startsWith('$')) {
-		let indexColon = lineText.indexOf(':');
-		if (indexColon != -1 && (lineText.substring(1, indexColon).match(/^\w+$/))) {
-			specDecorations.push({
-				range: new vscode.Range(
-					lineNumber, offset,
-					lineNumber, offset + indexColon + 1
-				)
-			});
-			const modeIndex = lineText.substring(indexColon + 1).indexOf(':');
-			if (modeIndex != -1 && lineText.substring(indexColon + 1, indexColon + 1 + modeIndex).match(/^\w+$/)) {
-				specmDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + indexColon + 1,
-						lineNumber, offset + indexColon + 1 + modeIndex + 1
-					)
-				});
-				indexColon = modeIndex + indexColon + 1;
-			}
-			specrDecorations.push({
-				range: new vscode.Range(
-					lineNumber, offset + indexColon + 1,
-					lineNumber, offset + lineText.length
-				)
-			});
-			return;
-		}
-	}
-	for (let i = 0; i < lineText.length; i++) {
-		if (lineText[i].trim() === "") {
-			continue;
-		}
-		const remainingText = lineText.substring(i);
-		// we don't actually know if we can trust the group regex when it comes to the bounds of the group
-		const verificationResult = VerifyGroup(groupRegex, remainingText);
-		if (!verificationResult[0]) {
-			let accumulator = "";
-			while (i < lineText.length && !lineText[i].match(/\s/)) {
-				accumulator += lineText[i];
-				i++;
-			}
-			if (accumulator.startsWith("[") && !accumulator.includes("]") && !accumulator.includes("|")) {
-				const closingOpt = pairedIndex(lineText, "[", "]", i - accumulator.length + 1, 1);
-				const initialLength = accumulator.length;
-				if (closingOpt != -1) {
-					// in case it starts by an optional
-					if (accumulator[1] == "[") {
-						decorationsFromLine(accumulator.slice(1) + lineText.substring(i), lineNumber, groupRegex,
-							wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-							optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
-							createdAnchors, uncreatedAnchors, references, offset + i - accumulator.length + 1);
-					}
-					// in case it starts by a group
-					if (accumulator.includes("(")) {
-						const innerGroupResult = VerifyGroup(groupRegex, accumulator.slice(1) + lineText.substring(i))
-						if (innerGroupResult[0]) {
-							let end, postFix, prefixEnd;
-							[prefixEnd, end, postFix] = decorateFromGroupResult(innerGroupResult, lineNumber, offset, lineText, i - accumulator.length + 1, nDecorations, aDecorations);
-							const subStart = prefixEnd - offset + 1;
-							const subline = lineText.substring(subStart, end);
-							decorationsFromLine(subline, lineNumber, groupRegex,
-								wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-								optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
-								createdAnchors, uncreatedAnchors, references, subStart + offset);
-						}
-					}
-					// in case it starts by an anchor
-					if (accumulator[1] == "@" || (accumulator[1] == "?" && accumulator[2] == "@")) {
-						uncreatedAnchors.push({
-							line: lineNumber,
-							column: offset + i - accumulator.length + 1,
-							size: accumulator.length - 1,
-							name: accumulator.slice(1)
-						});
-						anbDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - accumulator.length + 1,
-								lineNumber, offset + i - accumulator.length + 2
-							)
-						});
-						anDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - accumulator.length + 2,
-								lineNumber, offset + i
-							)
-						});
-					}
-					accumulator += lineText.substring(i, closingOpt + 1);
-					optDecorations.push({ // [
-						range: new vscode.Range(
-							lineNumber, offset + i - initialLength,
-							lineNumber, offset + i - initialLength + 1
-						)
-					});
-					optDecorations.push({ // ]
-						range: new vscode.Range(
-							lineNumber, offset + closingOpt,
-							lineNumber, offset + closingOpt + 1
-						)
-					});
-					if (closingOpt + 1 < lineText.length && lineText[closingOpt + 1] === ':') {
-						aDecorations.push({ // ignored :
-							range: new vscode.Range(
-								lineNumber, offset + closingOpt + 1,
-								lineNumber, offset + closingOpt + 2
-							)
-						});
-					}
-					const allOr = [...lineText.substring(i, closingOpt).matchAll(/\s\|\s/g)];
-					for (const match of allOr) {
-						optDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i + match.index,
-								lineNumber, offset + i + match.index + 1
-							)
-						});
-					}
-				}
-			}
-			if (accumulator.startsWith("$[") || accumulator.startsWith("$$[") && accumulator.endsWith("]")) {
-				wDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length + (accumulator.startsWith("$$[") ? 3 : 2),
-						lineNumber, offset + i - 1
-					)
-				});
-				sDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length,
-						lineNumber, offset + i
-					)
-				});
-			}
-			if (accumulator.startsWith("@>")) {
-				if (accumulator.startsWith("@>>")) {
-					// optional lookahead
-					lDecorations.push({
-						range: new vscode.Range(
-							lineNumber, offset + i - accumulator.length,
-							lineNumber, offset + i - accumulator.length + 3
-						)
-					});
-					optDecorations.push({ // [
-						range: new vscode.Range(
-							lineNumber, offset + i - accumulator.length + 3,
-							lineNumber, offset + i - accumulator.length + 4
-						)
-					});
-					const endIndex = lineText.substring(i).search(/[^\\]\]/);
-					if (endIndex == -1) {
-						continue;
-					} else {
-						let cursor = i - 4;
-						const startCursor = cursor;
-						const allOr = [...lineText.substring(startCursor, i + endIndex).matchAll(/\s\|\s/g)];
-						if (allOr.length == 0) {
-							ltDecorations.push({ // before ]
-								range: new vscode.Range(
-									lineNumber, offset + cursor,
-									lineNumber, offset + endIndex
-								)
-							});
-							optDecorations.push({ // ]
-								range: new vscode.Range(
-									lineNumber, offset + endIndex,
-									lineNumber, offset + endIndex + 1
-								)
-							});
-							i += endIndex + 1;
-							continue;
-						}
-						for (const match of allOr) {
-							ltDecorations.push({
-								range: new vscode.Range( // before |
-									lineNumber, offset + cursor + 2,
-									lineNumber, offset + startCursor + match.index
-								)
-							});
-							cursor = startCursor + match.index + 1;
-						}
-						ltDecorations.push({ // after last |
-							range: new vscode.Range(
-								lineNumber, offset + cursor + 2,
-								lineNumber, offset + i + endIndex + 1
-							)
-						});
-						optDecorations.push({ // ]
-							range: new vscode.Range(
-								lineNumber, offset + i + endIndex + 1,
-								lineNumber, offset + i + endIndex + 2
-							)
-						});
-						i += endIndex;
-						continue;
-					}
-				}
-				lDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length,
-						lineNumber, offset + i - accumulator.length + 2
-					)
-				});
-				ltDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length + 2,
-						lineNumber, offset + i
-					)
-				});
-			}
-			else if (accumulator.startsWith("@") || (accumulator.startsWith("?@") || accumulator.includes(":@") || accumulator.includes(":?@"))) {
-				let cutShort = false;
-				if (accumulator[accumulator.length - 1] === ":") {
-					cutShort = true;
-					if (accumulator[accumulator.length - 2] === "?") {
-						createdAnchors.push({
-							line: lineNumber,
-							column: offset + i - accumulator.length + 2,
-							size: accumulator.length - 2,
-							name: accumulator.slice(2, -2)
-						});
-						aDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - 2,
-								lineNumber, offset + i - 1
-							)
-						});
-					}
-					createdAnchors.push({
-						line: lineNumber,
-						column: offset + i - accumulator.length + 1,
-						size: accumulator.length - 1,
-						name: accumulator.slice(0, -1)
-					});
-				} else if (accumulator[accumulator.length - 1] === "]") {
-					cutShort = true;
-					uncreatedAnchors.push({
-						line: lineNumber,
-						column: offset + i - accumulator.length + 1,
-						size: accumulator.length - 1,
-						name: accumulator.slice(0, -1)
-					});
-				} else {
-					if (accumulator.startsWith("@")) {
-						uncreatedAnchors.push({
-							line: lineNumber,
-							column: offset + i - accumulator.length,
-							size: accumulator.length,
-							name: accumulator
-						});
-					} else if (accumulator.startsWith("?@")) {
-						aDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - accumulator.length,
-								lineNumber, offset + i - accumulator.length + 1
-							)
-						});
-						uncreatedAnchors.push({
-							line: lineNumber,
-							column: offset + i - accumulator.length + 1,
-							size: accumulator.length - 1,
-							name: accumulator.slice(1)
-						});
-					} else {
-						const nameEndIndex = accumulator.indexOf(":");
-						const atIndex = accumulator.indexOf("@");
-						const questionIndex = accumulator.indexOf("?");
-						nDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - accumulator.length,
-								lineNumber, offset + i - accumulator.length + nameEndIndex
-							)
-						});
-						aDecorations.push({
-							range: new vscode.Range(
-								lineNumber, offset + i - accumulator.length + nameEndIndex,
-								lineNumber, offset + i - accumulator.length + nameEndIndex + (questionIndex == -1 ? 1 : 2)
-							)
 
-						});
-						uncreatedAnchors.push({
-							line: lineNumber,
-							column: offset + i - accumulator.length + atIndex,
-							size: accumulator.length - atIndex,
-							name: accumulator.slice(atIndex)
-						});
-					}
-				}
-				anbDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length,
-						lineNumber, offset + i - accumulator.length + 1
-					)
-				});
-				anDecorations.push({
-					range: new vscode.Range(
-						lineNumber, offset + i - accumulator.length + 1,
-						lineNumber, offset + i - (cutShort ? 1 : 0)
-					)
-				});
-			}
-			continue;
+	/** Clip to the document: a range the builder/editor would reject is dropped, not thrown. */
+	const spans = (document: vscode.TextDocument, list: Span[]): vscode.DecorationOptions[] => {
+		const options: vscode.DecorationOptions[] = [];
+		for (const span of list) {
+			if (span.line < 0 || span.line >= document.lineCount) continue;
+			const lineLength = document.lineAt(span.line).text.length;
+			const character = Math.max(0, Math.min(span.character, lineLength));
+			const end = Math.min(character + span.length, lineLength);
+			if (end <= character) continue;
+			options.push({ range: new vscode.Range(span.line, character, span.line, end) });
 		}
-		let end, postFix, prefixEnd;
-		[i, prefixEnd, end, postFix] = decorateFromGroupResult(verificationResult, lineNumber, offset, lineText, i, nDecorations, aDecorations);
-		i = postFix;
-		const subStart = prefixEnd - offset + 1;
-		const subline = lineText.substring(subStart, end);
-		decorationsFromLine(subline, lineNumber, groupRegex,
-			wDecorations, sDecorations, nDecorations, aDecorations, anDecorations, anbDecorations,
-			optDecorations, specDecorations, specmDecorations, specrDecorations, lDecorations, ltDecorations,
-			createdAnchors, uncreatedAnchors, references, subStart + offset);
+		return options;
+	};
+
+	async function updateDecorations() {
+		const editor = activeEditor;
+		if (!editor || editor.document.languageId !== 'clemtoken') return;
+		if (!available) return;
+		const document = editor.document;
+		const version = document.version;
+		try {
+			const text = document.getText();
+			const set = await engine.tokenize(text, document.uri.toString(), version);
+			// the document may have moved on while the engine ran
+			if (version !== document.version || activeEditor !== editor) return;
+			const analysis: Analysis = analyze(text, set.tokens);
+			apply(editor, document, analysis);
+		} catch (e) {
+			output.appendLine(`Highlighting failed for ${document.uri.fsPath}: ${(e as Error).message}`);
+		}
 	}
+
+	function apply(editor: vscode.TextEditor, document: vscode.TextDocument, analysis: Analysis) {
+		editor.setDecorations(types.optional, spans(document, analysis.optional));
+		editor.setDecorations(types.anchorBase, spans(document, analysis.anchorBase));
+		editor.setDecorations(types.anchor, spans(document, analysis.anchor));
+		editor.setDecorations(types.title, spans(document, analysis.title));
+		editor.setDecorations(types.keyword, spans(document, analysis.keyword));
+		editor.setDecorations(types.selector, spans(document, analysis.selector));
+		editor.setDecorations(types.name, spans(document, analysis.name));
+		editor.setDecorations(types.affix, spans(document, analysis.affix));
+		editor.setDecorations(types.spec, spans(document, analysis.spec));
+		editor.setDecorations(types.specMode, spans(document, analysis.specMode));
+		editor.setDecorations(types.specRegex, spans(document, analysis.specRegex));
+		editor.setDecorations(types.lookahead, spans(document, analysis.lookahead));
+		editor.setDecorations(types.lookaheadText, spans(document, analysis.lookaheadText));
+		definitions = analysis.definitions;
+		const known = new Set(definitions.map(entry => entry.name));
+		references = analysis.references.filter(entry => known.has(entry.name));
+		uncreated = analysis.references.filter(entry => !known.has(entry.name));
+	}
+
+	updateDecorations();
 }
 
-function decorateFromGroupResult(
-	groupResult: [boolean, string, string, string, boolean],
-	lineNumber: number,
-	offset: number,
-	lineText: string,
-	i: number,
-	nDecorations: vscode.DecorationOptions[],
-	aDecorations: vscode.DecorationOptions[],
-): [number, number, number, number] {
-	const [name, size] = extractGroupName(groupResult[1], groupResult[2]);
-	let end = lineText.indexOf('(', i);
-	let stack = 0;
-	for (; end < lineText.length; end++) {
-		if (lineText[end] === "(") {
-			stack++;
-		}
-		if (lineText[end] === ")") {
-			stack--;
-		}
-		if (stack === 0) {
-			break;
-		}
-	}
-	if (end === lineText.length) {
-		end = lineText.length - 1;
-	}
-	const nameRange = new vscode.Range(
-		lineNumber, offset + i,
-		lineNumber, offset + i + name.length
-	);
-	const prefixRange = new vscode.Range(
-		lineNumber, offset + i + name.length,
-		lineNumber, offset + i + name.length + size + +(name.length > 0)
-	);
-	nDecorations.push({ range: nameRange });
-	aDecorations.push({ range: prefixRange });
-	i += name.length + size;
-	let postFix = end + 1;
-	for (; postFix < lineText.length; postFix++) {
-		if (lineText[postFix] === ")" || lineText[postFix] === " " || lineText[postFix] === "\n" || lineText[postFix] === "]") {
-			break;
-		}
-	}
-	const suffixRange = new vscode.Range(
-		lineNumber, offset + end + 1,
-		lineNumber, offset + postFix
-	);
-	aDecorations.push({ range: suffixRange });
-	return [i, prefixRange.end.character, end, postFix];
-
-}
-
-function pairedIndex(text: string, open: string, close: string, start: number = 0, startState: number = 0): number {
-	let depth = startState;
-	let skipNext = false;
-	for (let i = start; i < text.length; i++) {
-		if (!skipNext) {
-			if (text[i] === '\\') {
-				skipNext = true;
-				continue;
-			}
-			if (text[i] === open) depth++;
-			if (text[i] === close) depth--;
-		}
-		else {
-			skipNext = false;
-		}
-		if (depth === 0) return i;
-	}
-	return -1;
-}
-
-function VerifyGroup(groupRegex: RegExp, text: string): [boolean, string, string, string, boolean] {
-	if (!text.includes('(') || !text.includes(')')) {
-		return [false, "", "", "", false];
-	}
-	let match;
-	match = groupRegex.exec(text);
-	if (!match || !match.groups) {
-		return [false, "", "", "", false];
-	}
-	if (match.groups.token) {
-		return [true, match.groups.token, match.groups.prefix, match.groups.suffix, !!match.groups.subgroup];
-	} else {
-		return [true, match.groups.post_token, "", match.groups.solo_suffix, !!match.groups.subgroup_post];
-	}
-}
-function extractGroupName(value: string, prefix: string): [string, number] {
-	let postNameSize = 0;
-	let name = "";
-	if (prefix && prefix.trim() !== "" && prefix.includes(":")) {
-		const parts = prefix.split(':');
-		if (parts.length > 2) {
-			throw new Error("Cannot have more than one name to a group: " + prefix);
-		}
-		name = parts[0];
-		postNameSize = parts[1].length;
-	} else {
-		postNameSize = prefix.length;
-	}
-	return [name, postNameSize];
-}
 export function deactivate() { }
