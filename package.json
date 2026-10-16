@@ -1,7 +1,7 @@
 {
   "name": "clemtoken-highlighter",
   "displayName": "ClemToken Highlighter",
-  "description": "Syntax highlighting for the unreleased ClemToken grammar DSL",
+  "description": "Syntax highlighting for the unreleased ClemToken grammar DSL.\nThe DSL's grammar is defined in its own syntax in source.",
   "publisher": "ClemCa",
   "repository": {
     "type": "git",
