@@ -4,13 +4,12 @@ import { Anchor, Analysis, Spec } from './highlight';
 
 /**
  * Name collisions the static stats do not flag. Duplicate rule names make the parser throw at
- * runtime; duplicate spec declarations and declarations shadowed by a non-overridable built-in are
- * silently ignored.
+ * runtime; a declaration shadowed by a non-overridable built-in is silently ignored. Redeclaring a
+ * spec is not a collision: the engine treats every `$name:` declaration as an alternative.
  */
 export function collectDiagnostics(analysis: Analysis): vscode.Diagnostic[] {
 	return [
 		...duplicateRules(analysis.definitions),
-		...redeclaredSpecs(analysis.specs),
 		...shadowedSpecs(analysis.specs),
 	];
 }
@@ -29,27 +28,6 @@ function duplicateRules(definitions: Anchor[]): vscode.Diagnostic[] {
 			`@${definition.name} is already defined on line ${line + 1}. The parser fails on a duplicate rule name.`,
 			vscode.DiagnosticSeverity.Error,
 			definition.line, definition.column, definition.size,
-		));
-	}
-	return diagnostics;
-}
-
-/** `$a:` twice: the last declaration wins, so the earlier ones are dead. */
-function redeclaredSpecs(specs: Spec[]): vscode.Diagnostic[] {
-	const last = new Map<string, number>();
-	for (const spec of specs) {
-		last.set(spec.name, spec.line);
-	}
-	const diagnostics: vscode.Diagnostic[] = [];
-	for (const spec of specs) {
-		const line = last.get(spec.name);
-		if (line === undefined || line === spec.line) {
-			continue;
-		}
-		diagnostics.push(diagnostic(
-			`$${spec.name} is redeclared on line ${line + 1}; only the last declaration is used.`,
-			vscode.DiagnosticSeverity.Warning,
-			spec.line, spec.nameColumn, spec.nameSize,
 		));
 	}
 	return diagnostics;

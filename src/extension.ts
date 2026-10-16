@@ -4,6 +4,7 @@ import { collectDiagnostics } from './diagnostics';
 import { Anchor, Analysis, Span, analyze } from './highlight';
 import { provideHover } from './hover';
 import { StatsRow, StatsView } from './statsView';
+import { grammarFlame, profileFlame } from './flameGraph';
 import { formatBytes, formatDuration, ruleFlags, symbolBound } from './format';
 import { ClemTokenSemanticTokensProvider, legend } from './semanticTokens';
 
@@ -474,7 +475,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 				void vscode.window.showWarningMessage('ClemToken: no stats, the grammar has errors.');
 				return;
 			}
-			statsView.showGrammar(fileName(current.document), GRAMMAR_HEADERS, grammarRows(current.analysis, stats));
+			statsView.showGrammar(fileName(current.document), GRAMMAR_HEADERS, grammarRows(current.analysis, stats), grammarFlame(current.analysis, stats));
 		}),
 		vscode.commands.registerCommand('clemtoken.profileGrammar', async () => {
 			const editor = activeEditor;
@@ -482,7 +483,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			if (!available) return;
 			try {
 				const metrics = await engine.profile(editor.document.getText());
-				statsView.showProfile(fileName(editor.document), PROFILE_HEADERS, profileRows(metrics));
+				statsView.showProfile(fileName(editor.document), PROFILE_HEADERS, profileRows(metrics), profileFlame(metrics));
 			} catch (e) {
 				report(`Profile failed for ${editor.document.uri.fsPath}: ${(e as Error).message}`);
 				void vscode.window.showWarningMessage('ClemToken: could not profile the grammar. See the ClemToken output.');
@@ -616,7 +617,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 	function refreshGrammarPanel(): void {
 		const model = current;
 		if (model === undefined || stats === undefined || statsVersion !== model.version) return;
-		statsView.showGrammar(fileName(model.document), GRAMMAR_HEADERS, grammarRows(model.analysis, stats));
+		statsView.showGrammar(fileName(model.document), GRAMMAR_HEADERS, grammarRows(model.analysis, stats), grammarFlame(model.analysis, stats));
 	}
 
 	function updateStatusBar(): void {

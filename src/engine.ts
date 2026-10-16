@@ -56,6 +56,18 @@ export interface RuleMetrics {
 	selfMs: number;
 }
 
+/** One node of the merged call tree from `-stats parse tree json`. `rule` indexes `rules` (-1 = root). */
+export interface CallNode {
+	id: number;
+	parent: number;
+	rule: number;
+	executions: number;
+	matches: number;
+	failures: number;
+	allocatedBytes: number;
+	totalMs: number;
+}
+
 export interface ParseMetrics {
 	schema: string;
 	version: number;
@@ -64,11 +76,14 @@ export interface ParseMetrics {
 	unattributedAllocatedBytes: number;
 	unattributedElapsedMs: number;
 	rules: RuleMetrics[];
+	/** merged call tree, for the flame graph; empty when the engine predates the call-tree output */
+	tree: CallNode[];
 }
 
 const SCHEMA = 'clemtoken.tokens';
 const GRAMMAR_STATS_SCHEMA = 'clemtoken.grammarStats';
 const PARSE_METRICS_SCHEMA = 'clemtoken.parseMetrics';
+const PARSE_TREE_SCHEMA = 'clemtoken.parseTree';
 const VERSION = 1;
 const TIMEOUT_MS = 10000;
 /** Hard cap on engine stdout + stderr, so a runaway engine cannot exhaust the extension host. */
@@ -220,10 +235,15 @@ export class ClemTokenEngine implements vscode.Disposable {
 		return this.memo(this.statsCache, documentKey, documentVersion, run);
 	}
 
-	/** Runtime parse metrics of `text` under the DSL grammar (`-stats parse`). Uncached: one-shot profile. */
+	/**
+	 * Runtime parse metrics of `text` under the DSL grammar (`-stats parse tree`). The call tree
+	 * (`edges`) drives the flame graph; an engine that predates it falls back to the flat table.
+	 */
 	profile(text: string): Promise<ParseMetrics> {
-		return this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'json'], text)
-			.then((parsed) => this.contract(parsed, PARSE_METRICS_SCHEMA, VERSION) as ParseMetrics);
+		return this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'tree', 'json'], text)
+			.then((parsed) => this.contract(parsed, PARSE_TREE_SCHEMA, VERSION) as ParseMetrics)
+			.catch(() => this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'json'], text)
+				.then((parsed) => ({ ...(this.contract(parsed, PARSE_METRICS_SCHEMA, VERSION) as ParseMetrics), tree: [] })));
 	}
 
 	/** Reuse an in-flight or completed run for the same key + version; a failed run is dropped. */

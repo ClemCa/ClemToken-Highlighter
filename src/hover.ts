@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { builtinSpec, BUILTIN_SPEC_NAMES } from './builtins';
 import { GrammarStats, RuleGrammarStats, SyntaxToken } from './engine';
-import { Analysis, Spec } from './highlight';
+import { Analysis } from './highlight';
 import { ruleFlags, symbolBound } from './format';
 
 /**
@@ -192,14 +192,18 @@ function ruleLine(stats: GrammarStats | undefined, name: string, tail?: string):
 function appendSpec(md: vscode.MarkdownString, analysis: Analysis, name: string, declaration: SyntaxToken | undefined, ignored: boolean): void {
 	const uses = analysis.tokens.filter((token) => token.rule === 'reserved' && token.leaf === 'word' && token.value === name).length;
 	const builtin = builtinSpec(name);
-	// a declaration is the spec written at this position; a reference resolves to the last one, which
-	// is the one the engine's spec store keeps
-	const spec = declaration !== undefined
-		? analysis.specs.find((entry) => entry.line === declaration.line && entry.nameColumn === declaration.character)
-		: lastSpec(analysis, name);
+	// a declaration is the spec written at this position; a reference stands for every declaration
+	// of that name, which the engine treats as alternatives
+	const specs = declaration !== undefined
+		? analysis.specs.filter((entry) => entry.line === declaration.line && entry.nameColumn === declaration.character)
+		: analysis.specs.filter((entry) => entry.name === name);
 	md.appendMarkdown(`**$${name}**\n\n`);
-	if (spec !== undefined) {
-		const parts = [inline(spec.body.trim()), `${uses} use${uses === 1 ? '' : 's'}`];
+	if (specs.length > 0) {
+		const bodies = specs.map((spec) => inline(spec.body.trim())).join(' | ');
+		const parts = [bodies, `${uses} use${uses === 1 ? '' : 's'}`];
+		if (specs.length > 1) {
+			parts.push(`${specs.length} declarations, alternatives`);
+		}
 		if (ignored) {
 			parts.push('ignored');
 		}
@@ -218,16 +222,6 @@ function appendSpec(md: vscode.MarkdownString, analysis: Analysis, name: string,
 		return;
 	}
 	md.appendMarkdown(`No \`$${name}\` spec. Built-ins: ${BUILTIN_SPEC_NAMES.map((entry) => inline(entry)).join(', ')}.`);
-}
-
-function lastSpec(analysis: Analysis, name: string): Spec | undefined {
-	let found: Spec | undefined;
-	for (const spec of analysis.specs) {
-		if (spec.name === name) {
-			found = spec;
-		}
-	}
-	return found;
 }
 
 /** `$$[name]` is `$[name]` with the match ignored (`Generator.cs` maps `$$` to `Ignored`). */

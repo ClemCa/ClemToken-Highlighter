@@ -1,4 +1,4 @@
-import { SyntaxToken } from './engine';
+import type { SyntaxToken } from './engine';
 
 /** A half-open range on one line, in the same UTF-16 units the engine reports. */
 export interface Span {

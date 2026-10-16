@@ -1,4 +1,4 @@
-import { RuleGrammarStats } from './engine';
+import type { RuleGrammarStats } from './engine';
 
 /** Shared formatting for the engine's stats numbers, used by hover, the status bar and the tables. */
 
