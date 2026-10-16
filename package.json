@@ -1,13 +1,13 @@
 {
   "name": "clemtoken-highlighter",
   "displayName": "ClemToken Highlighter",
-  "description": "Syntax highlighting for the unreleased ClemToken grammar DSL.\nThe DSL's grammar is defined in its own syntax in source.",
+  "description": "Syntax highlighting for the unreleased ClemToken grammar DSL.",
   "publisher": "ClemCa",
   "repository": {
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.5.0",
+  "version": "1.5.1",
   "engines": {
     "vscode": "^1.140.0"
   },

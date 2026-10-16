@@ -4,6 +4,9 @@ All notable changes to the "clemtoken-highlighter" extension will be documented 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.5.1] - 2026-10-15
+- The agent had made the documentation for the changelog, and overdid it on the readme.
+
 ## [1.5.0] - 2026-10-15
 
 - Highlighting is now parser-driven: a bundled ClemToken engine tokenizes the document and the
