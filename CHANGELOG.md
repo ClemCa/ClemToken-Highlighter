@@ -4,6 +4,41 @@ All notable changes to the "clemtoken-highlighter" extension will be documented 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.5.2] - 2026-10-16
+
+- Added `ClemToken: Show Grammar Stats` and `ClemToken: Profile Grammar`, which open the grammar's
+  static analysis and a live parse profile in one reusable panel
+- A status bar item summarises the current grammar (`N rules · M nodes`) and opens the stats window
+- Grammar Stats and Parse Profile now open with a flame graph above the table: the grammar window
+  nests each rule under the rules that reference it (width = the tokens in its fully-expanded body),
+  and the profile window draws the engine's new per-call call tree (width = inclusive time)
+- The flame graphs are interactive: hover a frame to spotlight its stack and read a tooltip that
+  follows the cursor, click a frame to zoom into that subtree (the only way to see frames too thin to
+  draw at full width, with a breadcrumb to navigate back), and filter by rule name to flag every match
+- The flame graph and the rule table below are linked: clicking a frame filters the table to that
+  rule, clicking (or hovering) a row filters to the rule and zooms the graph to where it runs, and
+  typing in the filter box narrows the table as it flags the matching frames
+- Hovering a rule definition or a reference now explains it: the rule's type, symbol bound, flags and
+  reference count, its body, and a link from a reference to its definition
+- Hovering a spec now reports its body and uses, and whether it overrides a built-in or is shadowed
+  by one; `$$name` is flagged as ignored and an undeclared `$name` lists the built-ins
+- Hovering a group's `(` / `)` now reports the group's label, body and repetition, and hovering a
+  group's label `:` reports the separator
+- Hovering an option's `[` / `]` now marks it as optional (with its branch count); `|` reports the
+  branch separator, `$[...]`'s brackets report the reserved spec selector, and `@>` / `@>>` report a
+  zero-width lookahead
+- Hovering a repetition suffix now says how many times it repeats and whether the match is ignored
+- A reference count now sits above each rule definition as a CodeLens shortcut to Find References,
+  behind the new `clemtoken.showCodeLens` setting
+- The editor now flags a duplicate `@rule` name (an error, since the parser throws on it) and a
+  declaration of a built-in spec the engine cannot override (a warning, since it is silently ignored)
+- Group parentheses are now coloured by nesting depth from the new `clemtoken.bracketColors` list (an
+  empty list turns the rainbow off), and `clemtoken.statsDebounceMs` sets how long stats wait after
+  an edit
+- The bundled engine no longer crashes on malformed or pathological input: an unhandled error, or a
+  grammar nested too deeply to walk, now reports a message on stderr and exits non-zero instead of
+  aborting the process (which the editor surfaced as a crash)
+
 ## [1.5.1] - 2026-10-15
 - The agent had made the documentation for the changelog, and overdid it on the readme.
 
