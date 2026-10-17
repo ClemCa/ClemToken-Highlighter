@@ -4,6 +4,10 @@
 //   node scripts/stage-engine.mjs --target linux-x64  # built inside WSL2
 //   node scripts/stage-engine.mjs --engine <ClemToken checkout>
 //
+// Without --engine it looks for ../ClemToken, a sibling checkout. That folder is not part of this
+// repo and usually is not there; if your checkout lives elsewhere, either pass --engine or edit
+// ENGINE_DEFAULT below, which is the only place the default is written.
+//
 // NativeAOT cannot cross-compile ("Cross-OS native compilation is not supported"), so a target that
 // is not this machine needs a machine of that kind. On Windows that machine is WSL2, which runs a
 // real Linux kernel; scripts/setup-wsl.sh installs the toolchain it needs. The shipped grammar is
@@ -24,7 +28,13 @@ const flag = (name, fallback) => {
 
 const HOST = `${process.platform}-${process.arch}`;
 const target = flag('target', HOST);
-const engineRepo = resolve(flag('engine', join('..', 'ClemToken')));
+
+// The engine source is its own checkout and is not part of this repo; bin/ holds the prebuilt
+// engines, so this default only has to be right when something actually needs rebuilding. Edit the
+// folder name here if your checkout does not sit next to this one, or pass --engine per run.
+const ENGINE_DEFAULT = join('..', 'ClemToken');
+const engineArg = flag('engine');
+const engineRepo = resolve(engineArg ?? ENGINE_DEFAULT);
 
 // folder name -> RID. Add an entry here to support another platform; Windows and macOS can only be
 // built on a machine of that kind (macOS would also need an ad-hoc codesign step, since Gatekeeper
@@ -44,7 +54,20 @@ if (rid === undefined) {
 
 const project = join(engineRepo, 'ClemToken.csproj');
 if (!existsSync(project)) {
-  console.error(`No ClemToken.csproj under ${engineRepo}. Pass --engine <path>.`);
+  console.error(`No ClemToken.csproj under ${engineRepo}.`);
+  if (engineArg === undefined) {
+    console.error(
+      `That is the default engine folder, "${ENGINE_DEFAULT}", which is relative to this repo and did not\n` +
+      `exist. The engine's source lives in a separate checkout; this repo only carries the engines it\n` +
+      `already built, in bin/. If your checkout is somewhere else, pass --engine <path>, or edit\n` +
+      `ENGINE_DEFAULT at the top of scripts/stage-engine.mjs so the default points at it.`,
+    );
+  } else {
+    console.error(
+      `Pass a checkout that contains ClemToken.csproj, or edit ENGINE_DEFAULT at the top of\n` +
+      `scripts/stage-engine.mjs.`,
+    );
+  }
   process.exit(1);
 }
 

@@ -1,7 +1,7 @@
 *.vsix
 
-# staged engine binaries + compiled grammar (built by scripts/stage-engine.mjs)
-bin/
+# staged engine binaries + compiled grammar (built by scripts/stage-engine.mjs) are committed on
+# purpose: the package is universal, and the repo stays buildable without an engine checkout.
 
 # Logs
 logs
