@@ -17,7 +17,7 @@ interface Latest {
 }
 
 /**
- * One reusable panel for the `-stats` tables and their flame graphs. The tables are static markup;
+ * One reusable panel for the `analyze`/`profile` tables and their flame graphs. The tables are static markup;
  * the flame graph ships its tree as JSON plus a small script (see `flame.ts`) so it can be zoomed
  * and hovered. Both are themed with VS Code's CSS variables and gated by a per-render CSP nonce.
  */

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-/** One highlightable terminal, as emitted by `ClemToken -tokens json`. */
+/** One highlightable terminal, as emitted by `ClemToken tokens`. */
 export interface SyntaxToken {
 	/** nearest enclosing grammar rule: the highlight-kind taxonomy, or `null` for a recovery `Error`. */
 	rule: string | null;
@@ -21,7 +21,7 @@ export interface TokenSet {
 	tokens: SyntaxToken[];
 }
 
-/** One rule's static analysis, as emitted by `-stats grammar json`. `low`/`high` are `null` for infinity. */
+/** One rule's static analysis, as emitted by `ClemToken analyze --json`. `low`/`high` are `null` for infinity. */
 export interface RuleGrammarStats {
 	name: string;
 	type: string;
@@ -42,7 +42,7 @@ export interface GrammarStats {
 	rules: RuleGrammarStats[];
 }
 
-/** One rule's runtime attribution, as emitted by `-stats parse json`. */
+/** One rule's runtime attribution, as emitted by `ClemToken profile --json`. */
 export interface RuleMetrics {
 	name: string;
 	type: string;
@@ -56,7 +56,7 @@ export interface RuleMetrics {
 	selfMs: number;
 }
 
-/** One node of the merged call tree from `-stats parse tree json`. `rule` indexes `rules` (-1 = root). */
+/** One node of the merged call tree from `ClemToken profile --tree`. `rule` indexes `rules` (-1 = root). */
 export interface CallNode {
 	id: number;
 	parent: number;
@@ -214,7 +214,7 @@ export class ClemTokenEngine implements vscode.Disposable {
 	 * document is only ever shelled out once.
 	 */
 	tokenize(text: string, documentKey?: string, documentVersion?: number): Promise<TokenSet> {
-		const run = () => this.run(['-f', this.resolveGrammar(), '-in', '-tokens', 'json'], text)
+		const run = () => this.run(['tokens', this.resolveGrammar(), '-'], text)
 			.then((parsed) => this.contract(parsed, SCHEMA, VERSION) as TokenSet);
 		if (documentKey === undefined || documentVersion === undefined) {
 			return run();
@@ -223,11 +223,11 @@ export class ClemTokenEngine implements vscode.Disposable {
 	}
 
 	/**
-	 * Static analysis of a grammar (`-stats grammar`). The grammar arrives over stdin (`-f -`), so
-	 * the buffer under edit is analyzed as-is. Cached per document version like `tokenize`.
+	 * Static analysis of a grammar (`analyze`). The grammar arrives over stdin (`-`), so the buffer
+	 * under edit is analyzed as-is. Cached per document version like `tokenize`.
 	 */
 	grammarStats(text: string, documentKey?: string, documentVersion?: number): Promise<GrammarStats> {
-		const run = () => this.run(['-f', '-', '-stats', 'grammar', 'json'], text)
+		const run = () => this.run(['analyze', '-', '--json'], text)
 			.then((parsed) => this.contract(parsed, GRAMMAR_STATS_SCHEMA, VERSION) as GrammarStats);
 		if (documentKey === undefined || documentVersion === undefined) {
 			return run();
@@ -236,13 +236,13 @@ export class ClemTokenEngine implements vscode.Disposable {
 	}
 
 	/**
-	 * Runtime parse metrics of `text` under the DSL grammar (`-stats parse tree`). The call tree
+	 * Runtime parse metrics of `text` under the DSL grammar (`profile --tree`). The call tree
 	 * (`edges`) drives the flame graph; an engine that predates it falls back to the flat table.
 	 */
 	profile(text: string): Promise<ParseMetrics> {
-		return this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'tree', 'json'], text)
+		return this.run(['profile', this.resolveGrammar(), '-', '--tree', '--json'], text)
 			.then((parsed) => this.contract(parsed, PARSE_TREE_SCHEMA, VERSION) as ParseMetrics)
-			.catch(() => this.run(['-f', this.resolveGrammar(), '-in', '-stats', 'parse', 'json'], text)
+			.catch(() => this.run(['profile', this.resolveGrammar(), '-', '--json'], text)
 				.then((parsed) => ({ ...(this.contract(parsed, PARSE_METRICS_SCHEMA, VERSION) as ParseMetrics), tree: [] })));
 	}
 

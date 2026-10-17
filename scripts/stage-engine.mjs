@@ -129,7 +129,7 @@ function stageInWsl() {
 /** `dsl.ct` -> `dsl.cta`, compiled by the engine itself so the two can never disagree. */
 function compileGrammar(binary) {
   const grammarOut = join('bin', 'dsl.cta');
-  execFileSync(binary, ['-f', join(engineRepo, 'dsl.ct'), '-o', grammarOut], { stdio: 'inherit' });
+  execFileSync(binary, ['build', join(engineRepo, 'dsl.ct'), '-o', grammarOut], { stdio: 'inherit' });
   console.log(`Staged ${grammarOut}`);
 }
 

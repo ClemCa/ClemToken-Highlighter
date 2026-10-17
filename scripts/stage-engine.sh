@@ -44,6 +44,6 @@ mkdir -p "$bin/$rid"
 cp "$work/out/ClemToken" "$bin/$rid/ClemToken"
 
 # compiled by the engine that was just built, so the binary and the grammar cannot drift apart
-"$work/out/ClemToken" -f "$work/src/dsl.ct" -o "$bin/dsl.cta"
+"$work/out/ClemToken" build "$work/src/dsl.ct" -o "$bin/dsl.cta"
 
 echo "Staged $bin/$rid"
