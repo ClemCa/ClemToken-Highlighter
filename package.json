@@ -7,7 +7,7 @@
     "type": "git",
     "url": "https://github.com/ClemCa/ClemToken-Highlighter.git"
   },
-  "version": "1.5.2",
+  "version": "1.6.0",
   "engines": {
     "vscode": "^1.140.0"
   },
@@ -16,7 +16,6 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:clemtoken"
   ],
   "main": "./dist/extension.js",
   "license": "SEE LICENSE IN LICENSE",
@@ -42,7 +41,8 @@
         "aliases": [
           "ClemToken",
           "clemtoken"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
       },
       {
         "id": "clemtoken-abstract",
@@ -70,9 +70,6 @@
           ],
           "regexp": [
             "string.regexp"
-          ],
-          "operator": [
-            "keyword.operator"
           ]
         }
       }
@@ -163,6 +160,11 @@
         "type": "string",
         "default": "#FFB6C1",
         "description": "Optional color"
+      },
+      "clemtoken.activeColor": {
+        "type": "string",
+        "default": "#8B5CF6",
+        "description": "Color for the construct described by the current-line inlay hint"
       },
       "clemtoken.specColor": {
         "type": "string",
@@ -259,5 +261,8 @@
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.1.2"
+  },
+  "dependencies": {
+    "randexp": "^0.6.0"
   }
 }

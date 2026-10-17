@@ -4,6 +4,30 @@ All notable changes to the "clemtoken-highlighter" extension will be documented 
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [1.6.0] - 2026-10-16
+
+Support for various editor features in more depth than the previous stubs: completion, hovers, inlay hints, warnings, etc.
+
+- Completion covers built-in, engine and declared specs plus anchors, with expected types and
+  descriptions; it also offers `@>>[]`, creates undeclared `@name:` rules, lists `$spacing:` values,
+  and works without the engine
+- Hovers describe whole constructs — specs, rules, references, lookaheads and options — instead of
+  isolated tokens; option branches share a summary and suffixes name what they repeat
+- Spec hovers separate the declaration, `simple:`/`regex:` mode and definition, showing type, uses,
+  predefined descriptions and generated regex examples; engine specs use their real shape
+- Inlay hints show the active line's spec type and description, rule facts, or enclosing
+  group/option; the described construct is tinted with the new `clemtoken.activeColor` (purple by
+  default)
+- Spacing modifiers (`$explicit:`, `$implicit:`, `!`) are highlighted and hoverable
+- `.ct` files auto-close `()` and `[]` with the cursor inside, surround selections, and support `#`
+  line comments
+- Unused custom specs are warnings faded with the unnecessary tag; built-in and engine specs are
+  never flagged
+- Rule summaries keep root sequences flat, indent groups and options, attach repetition bounds, and
+  use syntax colours
+- Operator glyphs such as `**`, `*/` and `:-:` stay literal in highlighting and summaries
+- Stats stay tied to their document, so switching files no longer reuses another file's numbers
+
 ## [1.5.2] - 2026-10-16
 
 - Added `ClemToken: Show Grammar Stats` and `ClemToken: Profile Grammar`, which open the grammar's

@@ -1,15 +1,17 @@
 import * as vscode from 'vscode';
 import { ClemTokenEngine, SyntaxToken } from './engine';
+import { isReference } from './syntax';
+import { isSpacingModifier } from './spacing';
 
 /**
  * The coarse categories handed to the theme.
  *
  * Deliberately small: the grammar has around eleven rule kinds and a theme has no idea what most
  * of them mean. Only the categories that map onto real editor concepts are published here; the
- * ClemToken-specific marks (affixes, anchors, optional brackets, spec modes) stay in the
- * decoration layer, which is also where the user's own colours live.
+ * ClemToken-specific marks (affixes, optional brackets, spec modes) stay in the decoration layer,
+ * which is also where the user's own colours live.
  */
-export const tokenTypes = ['comment', 'keyword', 'variable', 'regexp', 'operator'] as const;
+export const tokenTypes = ['comment', 'keyword', 'variable', 'regexp'] as const;
 
 export const tokenModifiers: string[] = [];
 
@@ -17,8 +19,13 @@ export const legend = new vscode.SemanticTokensLegend([...tokenTypes], [...token
 
 type Kind = typeof tokenTypes[number];
 
+const kindIndex = new Map<Kind, number>(tokenTypes.map((kind, index) => [kind, index]));
+
 /** rule/leaf -> coarse kind, or `undefined` to leave the token to the decoration layer. */
 function kindOf(token: SyntaxToken): Kind | undefined {
+	if (isReference(token)) {
+		return 'variable';
+	}
 	switch (token.rule) {
 		case 'commentline':
 			return 'comment';
@@ -28,14 +35,6 @@ function kindOf(token: SyntaxToken): Kind | undefined {
 		case 'reserved':
 			// `$[name]` / `$$[name]`: references to the built-in specs
 			return 'keyword';
-		case 'plain_reference':
-		case 'named_reference':
-		case 'optional_reference':
-		case 'named_optional_reference':
-			return 'variable';
-		case 'optional':
-		case 'suffix':
-			return 'operator';
 		default:
 			return undefined;
 	}
@@ -69,14 +68,23 @@ export class ClemTokenSemanticTokensProvider implements vscode.DocumentSemanticT
 function build(document: vscode.TextDocument, tokens: SyntaxToken[]): vscode.SemanticTokens {
 	const builder = new vscode.SemanticTokensBuilder(legend);
 	const ordered = [...tokens].sort((a, b) => a.line - b.line || a.character - b.character);
+	// a line-start `$explicit:`/`$implicit:` is a modifier, not a spec declaration: its target
+	// follows immediately on the same line, so leave the whole line to the decoration layer
+	const spacingLines = lineStartSpacingModifiers(ordered);
 	let endLine = -1;
 	let endCharacter = -1;
 	for (const token of ordered) {
+		if (spacingLines.has(token.line)) {
+			continue;
+		}
 		const kind = kindOf(token);
 		if (kind === undefined || token.length <= 0) {
 			continue;
 		}
-		const index = tokenTypes.indexOf(kind);
+		const index = kindIndex.get(kind);
+		if (index === undefined) {
+			continue;
+		}
 		// a line terminator belongs to no category and its range would cross into the next line
 		if (token.value.includes('\n') || token.value.includes('\r')) {
 			continue;
@@ -102,4 +110,26 @@ function build(document: vscode.TextDocument, tokens: SyntaxToken[]): vscode.Sem
 		endCharacter = end;
 	}
 	return builder.build();
+}
+
+/** Lines that start with a spacing modifier (`$explicit:@rule`, `$implicit:[...]`). */
+function lineStartSpacingModifiers(tokens: SyntaxToken[]): Set<number> {
+	const lines = new Set<number>();
+	for (let index = 0; index + 3 < tokens.length; index++) {
+		const dollar = tokens[index];
+		const name = tokens[index + 1];
+		const colon = tokens[index + 2];
+		const rest = tokens[index + 3];
+		if (
+			dollar.rule === 'specline' && dollar.leaf === 'dollar'
+			&& name.rule === 'specline' && name.leaf === 'word'
+			&& colon.rule === 'specline' && colon.leaf === ':'
+			&& rest.rule === 'specline' && rest.leaf === 'rest'
+			&& dollar.line === name.line && dollar.line === colon.line && dollar.line === rest.line
+			&& isSpacingModifier(name.value, rest.value)
+		) {
+			lines.add(dollar.line);
+		}
+	}
+	return lines;
 }

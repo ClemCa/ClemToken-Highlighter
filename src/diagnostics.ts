@@ -1,15 +1,18 @@
 import * as vscode from 'vscode';
-import { builtinSpec } from './builtins';
+import { builtinSpec, isEngineSpec } from './builtins';
 import { Anchor, Analysis, Spec } from './highlight';
+import { specUses } from './specs';
 
 /**
  * Name collisions the static stats do not flag. Duplicate rule names make the parser throw at
- * runtime; a declaration shadowed by a non-overridable built-in is silently ignored. Redeclaring a
- * spec is not a collision: the engine treats every `$name:` declaration as an alternative.
+ * runtime; a declaration shadowed by a non-overridable built-in is silently ignored, and a custom
+ * spec with no `$[name]` uses is dead weight. Redeclaring a spec is not a collision: the engine
+ * treats every `$name:` declaration as an alternative.
  */
 export function collectDiagnostics(analysis: Analysis): vscode.Diagnostic[] {
 	return [
 		...duplicateRules(analysis.definitions),
+		...unusedSpecs(analysis),
 		...shadowedSpecs(analysis.specs),
 	];
 }
@@ -33,6 +36,28 @@ function duplicateRules(definitions: Anchor[]): vscode.Diagnostic[] {
 	return diagnostics;
 }
 
+/**
+ * A custom spec declaration that no rule references. Built-ins and engine specs always have a
+ * purpose; a declaration shadowed by a non-overridable built-in is already reported by
+ * `shadowedSpecs`.
+ */
+function unusedSpecs(analysis: Analysis): vscode.Diagnostic[] {
+	const uses = specUses(analysis);
+	const diagnostics: vscode.Diagnostic[] = [];
+	for (const spec of analysis.specs) {
+		if (builtinSpec(spec.name) !== undefined || isEngineSpec(spec.name) || (uses.get(spec.name) ?? 0) > 0) {
+			continue;
+		}
+		diagnostics.push(diagnostic(
+			`$${spec.name} is declared but never used.`,
+			vscode.DiagnosticSeverity.Warning,
+			spec.line, spec.nameColumn, spec.nameSize,
+			vscode.DiagnosticTag.Unnecessary,
+		));
+	}
+	return diagnostics;
+}
+
 /** A declaration the built-in `space`, `tab`, `newline` or `greedy` spec silently ignores. */
 function shadowedSpecs(specs: Spec[]): vscode.Diagnostic[] {
 	const diagnostics: vscode.Diagnostic[] = [];
@@ -50,8 +75,11 @@ function shadowedSpecs(specs: Spec[]): vscode.Diagnostic[] {
 	return diagnostics;
 }
 
-function diagnostic(message: string, severity: vscode.DiagnosticSeverity, line: number, column: number, size: number): vscode.Diagnostic {
+function diagnostic(message: string, severity: vscode.DiagnosticSeverity, line: number, column: number, size: number, tag?: vscode.DiagnosticTag): vscode.Diagnostic {
 	const diagnostic = new vscode.Diagnostic(new vscode.Range(line, column, line, column + size), message, severity);
 	diagnostic.source = 'ClemToken';
+	if (tag !== undefined) {
+		diagnostic.tags = [tag];
+	}
 	return diagnostic;
 }

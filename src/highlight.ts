@@ -1,4 +1,8 @@
 import type { SyntaxToken } from './engine';
+import { isReference } from './syntax';
+import { isSpacingModifier, spacingMode, spacingModifierAt, spacingTarget } from './spacing';
+import type { SpacingModifier } from './spacing';
+import { specBodyParts } from './specs';
 
 /** A half-open range on one line, in the same UTF-16 units the engine reports. */
 export interface Span {
@@ -56,6 +60,8 @@ export interface Analysis {
 	definitions: Anchor[];
 	references: Anchor[];
 	specs: Spec[];
+	/** `$explicit:` / `$implicit:` prefixes and the `!` shorthand */
+	spacing: SpacingModifier[];
 	/** the engine's tokens in source order, for position lookup (hover, CodeLens) */
 	tokens: SyntaxToken[];
 }
@@ -78,6 +84,7 @@ const empty = (): Analysis => ({
 	definitions: [],
 	references: [],
 	specs: [],
+	spacing: [],
 	tokens: [],
 });
 
@@ -100,6 +107,30 @@ function glyph(token: SyntaxToken): string {
 		case 'pipe': return '|';
 		default: return token.leaf;
 	}
+}
+
+/**
+ * A suffix is a modifier only when it follows a construct that can repeat. Otherwise it is literal
+ * text: a leading `*` in an option branch or the `:` glued to `-` in an operator is not an affix.
+ */
+function isModifier(tokens: SyntaxToken[], index: number): boolean {
+	const token = tokens[index];
+	const previous = index > 0 ? tokens[index - 1] : undefined;
+	if (previous === undefined || previous.line !== token.line) {
+		return false;
+	}
+	if (previous.leaf === 'rparen' || previous.leaf === 'rbracket') {
+		return true;
+	}
+	if (previous.leaf === 'word') {
+		if (isReference(previous)) {
+			return true;
+		}
+		if (previous.rule === 'simple' || previous.rule === 'escaped') {
+			return previous.character + previous.length < token.character;
+		}
+	}
+	return false;
 }
 
 const anchorOf = (token: SyntaxToken): Anchor => ({
@@ -127,6 +158,9 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 	let lookaheadLine = -1;
 	// paren nesting for the rainbow colours; only `(`/`)` count, `[`/`$[` have their own colours
 	let bracketDepth = 0;
+	// the parts of a modifier are one coloured unit; the target after it is not part of the prefix
+	let spacingLine = -1;
+	let spacingEnd = -1;
 
 	for (let index = 0; index < ordered.length; index++) {
 		const token = ordered[index];
@@ -141,6 +175,18 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 		// branch contents belong to the probe, not to whatever element rule matched them
 		if (lookaheadDepth > 0 && token.rule !== 'optional_lookahead') {
 			result.lookaheadText.push(span);
+			continue;
+		}
+		if (token.line === spacingLine && token.character < spacingEnd) {
+			continue;
+		}
+		// a modifier is one keyword-like unit: colour it as such and leave its parts alone
+		const spacing = spacingModifierAt(ordered, index);
+		if (spacing !== undefined) {
+			result.spacing.push(spacing);
+			result.affix.push({ line: spacing.line, character: spacing.character, length: spacing.length });
+			spacingLine = spacing.line;
+			spacingEnd = spacing.character + spacing.length;
 			continue;
 		}
 
@@ -228,14 +274,18 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 
 			case 'optional':
 				if (token.leaf === 'affix') {
-					result.affix.push(span);
+					if (isModifier(ordered, index)) {
+						result.affix.push(span);
+					}
 				} else {
 					result.optional.push(span);
 				}
 				break;
 
 			case 'suffix':
-				result.affix.push(span);
+				if (isModifier(ordered, index)) {
+					result.affix.push(span);
+				}
 				break;
 
 			case 'group':
@@ -259,7 +309,9 @@ export function analyze(text: string, tokens: SyntaxToken[]): Analysis {
 				if (value === '@' || value === '>') {
 					result.lookahead.push(span);
 				} else if (token.leaf === 'affix') {
-					result.affix.push(span);
+					if (isModifier(ordered, index)) {
+						result.affix.push(span);
+					}
 				} else {
 					result.optional.push(span);
 					if (value === '[') {
@@ -307,6 +359,23 @@ function addSpecLine(result: Analysis, ordered: SyntaxToken[], index: number): v
 			nameToken = token;
 		}
 	}
+	if (colonEnd > start && nameToken !== undefined && isSpacingModifier(nameToken.value, rest.value)) {
+		const mode = spacingMode(nameToken.value);
+		const target = spacingTarget(rest.value);
+		if (mode !== undefined && target !== undefined) {
+			result.spacing.push({
+				line: rest.line,
+				character: start,
+				length: colonEnd - start,
+				mode,
+				text: `$${mode}:`,
+				shorthand: false,
+				target,
+			});
+			result.affix.push({ line: rest.line, character: start, length: colonEnd - start });
+			return;
+		}
+	}
 	if (colonEnd > start) {
 		result.spec.push({ line: rest.line, character: start, length: colonEnd - start });
 	}
@@ -323,11 +392,15 @@ function addSpecLine(result: Analysis, ordered: SyntaxToken[], index: number): v
 			bodySize: rest.value.length,
 		});
 	}
-	const modeEnd = rest.value.indexOf(':');
-	if (modeEnd !== -1 && /^\w+$/.test(rest.value.slice(0, modeEnd))) {
-		result.specMode.push({ line: rest.line, character: rest.character, length: modeEnd + 1 });
-		result.specRegex.push({ line: rest.line, character: rest.character + modeEnd + 1, length: rest.value.length - modeEnd - 1 });
-	} else {
-		result.specRegex.push({ line: rest.line, character: rest.character, length: rest.value.length });
+	const parts = specBodyParts(rest.value);
+	if (parts.mode !== '') {
+		result.specMode.push({ line: rest.line, character: rest.character + parts.modeOffset, length: parts.modeLength });
+	}
+	if (parts.definitionLength > 0) {
+		result.specRegex.push({
+			line: rest.line,
+			character: rest.character + parts.definitionOffset,
+			length: parts.definitionLength,
+		});
 	}
 }

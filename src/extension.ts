@@ -3,10 +3,12 @@ import { ClemTokenEngine, GrammarStats, ParseMetrics } from './engine';
 import { collectDiagnostics } from './diagnostics';
 import { Anchor, Analysis, Span, analyze } from './highlight';
 import { provideHover } from './hover';
+import { activeRanges, collectInlayHints, repositionHint } from './inlayHints';
 import { StatsRow, StatsView } from './statsView';
 import { grammarFlame, profileFlame } from './flameGraph';
 import { formatBytes, formatDuration, ruleFlags, symbolBound } from './format';
 import { ClemTokenSemanticTokensProvider, legend } from './semanticTokens';
+import { buildCompletionTable, CompletionTable, provideCompletion } from './completion';
 
 const GRAMMAR_HEADERS = ['Rule', 'Type', 'Bound', 'Flags', 'Uses'];
 const PROFILE_HEADERS = ['Rule', 'Type', 'Exec', 'Match', 'Fail', 'Alloc (incl / self)', 'Time (incl / self)', 'Value'];
@@ -82,7 +84,7 @@ function activateAbstract(context: vscode.ExtensionContext) {
 			updateDecorations();
 		}
 	}, null, context.subscriptions);
-	vscode.workspace.onDidChangeConfiguration(event => {
+	vscode.workspace.onDidChangeConfiguration(() => {
 		if (!activeEditor) return;
 		updateDecorations();
 	}, null, context.subscriptions);
@@ -92,7 +94,7 @@ function activateAbstract(context: vscode.ExtensionContext) {
 		}
 	}, null, context.subscriptions);
 	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider("clemtoken-abstract", {
-		provideDocumentSymbols(document, token) {
+		provideDocumentSymbols() {
 			return [...fields.map(field => {
 				return new vscode.DocumentSymbol(
 					field.name,
@@ -113,7 +115,7 @@ function activateAbstract(context: vscode.ExtensionContext) {
 		}
 	});
 	const foldingRangeProvider = vscode.languages.registerFoldingRangeProvider("clemtoken-abstract", {
-		provideFoldingRanges(document, context, token) {
+		provideFoldingRanges(document) {
 			function GetFoldingRanges(line: number, depth: number): [vscode.FoldingRange[], number] {
 				if (line >= document.lineCount) return [[], line];
 				const text = document.lineAt(line).text;
@@ -213,6 +215,7 @@ interface DecorationTypes {
 	anchor: vscode.TextEditorDecorationType;
 	anchorBase: vscode.TextEditorDecorationType;
 	optional: vscode.TextEditorDecorationType;
+	active: vscode.TextEditorDecorationType;
 	spec: vscode.TextEditorDecorationType;
 	specMode: vscode.TextEditorDecorationType;
 	specRegex: vscode.TextEditorDecorationType;
@@ -229,6 +232,9 @@ function createDecorationTypes(): DecorationTypes {
 	});
 	const bracketColors = vscode.workspace.getConfiguration('clemtoken').get<string[]>('bracketColors', []) ?? [];
 	const types = {
+		// registered first: decoration rules are inserted at the head of the stylesheet, so later
+		// registrations push this one to the end and its colour wins over the per-token colours
+		active: color('activeColor', '#8B5CF6'),
 		title: color('titleColor', '#02adf6ff'),
 		name: color('nameColor', '#808080'),
 		affix: color('affixColor', '#FF69B4'),
@@ -282,15 +288,20 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 	};
 
 	// what the language providers read: definitions are `@name:` rule lines, references are uses of
-	// them elsewhere. A reference with no definition is offered by completion as a new anchor.
+	// them elsewhere
 	let definitions: Anchor[] = [];
 	let references: Anchor[] = [];
-	let uncreated: Anchor[] = [];
 
 	// what the hover / CodeLens / command surfaces read: the last completed analysis plus its stats
 	let current: { document: vscode.TextDocument; version: number; analysis: Analysis } | undefined;
 	let stats: GrammarStats | undefined;
+	let statsDocument: vscode.TextDocument | undefined;
 	let statsVersion = -1;
+	// completion tables, rebuilt from the buffer and then upgraded by the last analysis and stats
+	let completion: { document: vscode.TextDocument; version: number; table: CompletionTable } | undefined;
+	// inlay hints follow the cursor line; this refreshes them after analysis or a cursor move
+	const inlayHintsChanged = new vscode.EventEmitter<void>();
+	context.subscriptions.push(inlayHintsChanged);
 
 	let activeEditor = vscode.window.activeTextEditor;
 	let pending: NodeJS.Timeout | undefined;
@@ -303,6 +314,24 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			pending = undefined;
 			void updateDecorations();
 		}, 150);
+	};
+
+	/** Colour the construct the current-line inlay hint describes, once the analysis is current. */
+	const updateActiveDecoration = () => {
+		const editor = activeEditor;
+		if (editor === undefined || editor.document.languageId !== 'clemtoken') {
+			return;
+		}
+		const model = current;
+		if (model === undefined || model.document !== editor.document) {
+			editor.setDecorations(types.active, []);
+			return;
+		}
+		if (model.version !== editor.document.version) {
+			// keep the last target until the debounced analysis catches up; clearing here would flicker
+			return;
+		}
+		editor.setDecorations(types.active, activeRanges(editor.document, model.analysis, editor.selection.active));
 	};
 
 	// stats are for reading, not typing: a longer debounce than the colours, and `ensureStats`
@@ -327,11 +356,21 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		activeEditor = editor;
 		void updateDecorations();
 		scheduleStats();
+		inlayHintsChanged.fire();
+		updateActiveDecoration();
+	}, null, context.subscriptions);
+	vscode.window.onDidChangeTextEditorSelection(event => {
+		if (event.textEditor === activeEditor) {
+			inlayHintsChanged.fire();
+			updateActiveDecoration();
+		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeTextDocument(event => {
 		if (activeEditor && event.document === activeEditor.document) {
 			schedule();
 			scheduleStats();
+			// re-place the cached hint at the new end of the line while the analysis is stale
+			inlayHintsChanged.fire();
 		}
 	}, null, context.subscriptions);
 	vscode.workspace.onDidChangeConfiguration(event => {
@@ -339,6 +378,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		types.dispose();
 		types = createDecorationTypes();
 		void updateDecorations();
+		updateActiveDecoration();
 		codeLenses.fire();
 	}, null, context.subscriptions);
 	vscode.languages.onDidChangeDiagnostics(event => {
@@ -353,7 +393,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		findReferenceAt(position) ?? definitions.find(entry => entry.line === position.line && position.character >= entry.column && position.character < entry.column + entry.size);
 
 	const documentSymbolProvider = vscode.languages.registerDocumentSymbolProvider({ language: 'clemtoken' }, {
-		provideDocumentSymbols(document, token) {
+		provideDocumentSymbols() {
 			const symbol = (entry: Anchor) => new vscode.DocumentSymbol(
 				entry.name,
 				'',
@@ -365,7 +405,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		}
 	});
 	const refProvider = vscode.languages.registerReferenceProvider({ language: 'clemtoken' }, {
-		provideReferences(document, position, context, token) {
+		provideReferences(document, position) {
 			const entry = findAnchorAt(position);
 			if (!entry) return null;
 			return references.filter(ref => ref.name === entry.name).map(ref => {
@@ -377,7 +417,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		}
 	});
 	const dProvider = vscode.languages.registerDefinitionProvider({ language: 'clemtoken' }, {
-		provideDefinition(document, position, token) {
+		provideDefinition(document, position) {
 			const reference = findReferenceAt(position);
 			if (!reference) return null;
 			const anchor = definitions.find(entry => entry.name === reference.name);
@@ -388,52 +428,27 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			);
 		}
 	});
+	const tableFor = (document: vscode.TextDocument): CompletionTable => {
+		if (completion !== undefined && completion.document === document && completion.version === document.version) {
+			return completion.table;
+		}
+		const analysis = current !== undefined && current.document === document && current.version === document.version ? current.analysis : undefined;
+		// stats belong to the active editor, so they are only safe when they describe this document
+		const grammar = analysis !== undefined && statsDocument === document && statsVersion === document.version ? stats : undefined;
+		completion = { document, version: document.version, table: buildCompletionTable(document.getText(), analysis, grammar) };
+		return completion.table;
+	};
 	const cProvider = vscode.languages.registerCompletionItemProvider({ language: 'clemtoken' }, {
 		provideCompletionItems(document, position, token) {
-			const word = document.getWordRangeAtPosition(position, /(?:\w+:\@\w+:\?\@|\?\@|\@|(?:\$\[?))\w+/);
-			if (!word) return [];
-			const text = document.getText(word);
-			if (!text) return [];
-			if ((text.startsWith("@") && !text.startsWith("@>")) || text.startsWith("?@") || text.includes(":@") || text.includes(":?@")) {
-				if (word.start.character === 0) {
-					if (text[0] !== '@') {
-						return [];
-					}
-					return uncreated.map(anchor => {
-						const item = new vscode.CompletionItem("@" + anchor.name + ":", vscode.CompletionItemKind.Function);
-						item.range = new vscode.Range(word.start, word.end);
-						return item;
-					});
-				}
-				const preStr = text.substring(0, text.indexOf("@"));
-				return definitions.map(anchor => {
-					const item = new vscode.CompletionItem(preStr + "@" + anchor.name, vscode.CompletionItemKind.Function);
-					item.range = new vscode.Range(word.start, word.end);
-					return item;
-				});
-			} else if (text.startsWith("$")) {
-				return [
-					"$[name]",
-					"$[digit]",
-					"$[space]",
-					"$$[name]",
-					"$$[digit]",
-					"$$[space]"
-				].map(item => {
-					const i = new vscode.CompletionItem(item, vscode.CompletionItemKind.Function);
-					i.range = new vscode.Range(word.start, word.end);
-					return i;
-				});
-			}
-			return [];
+			return provideCompletion(document, position, tableFor(document), token);
 		}
-	}, '@', '$');
+	}, '@', '$', '[', '>', ':', ' ');
 	context.subscriptions.push(refProvider, dProvider, documentSymbolProvider, cProvider);
 
 	const hoverProvider = vscode.languages.registerHoverProvider({ language: 'clemtoken' }, {
 		async provideHover(document, position) {
 			await ensureModel(document);
-			if (current === undefined || current.version !== document.version) return undefined;
+			if (current === undefined || current.document !== document || current.version !== document.version) return undefined;
 			await ensureStats();
 			return provideHover(document, current.analysis, stats, position);
 		}
@@ -443,7 +458,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		provideCodeLenses(document) {
 			if (!vscode.workspace.getConfiguration('clemtoken').get('showCodeLens', true)) return [];
 			const model = current;
-			if (model === undefined || model.version !== document.version) return [];
+			if (model === undefined || model.document !== document || model.version !== document.version) return [];
 			const lenses: vscode.CodeLens[] = [];
 			for (const definition of model.analysis.definitions) {
 				const count = model.analysis.references.reduce((total, ref) => ref.name === definition.name ? total + 1 : total, 0);
@@ -458,7 +473,38 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			return lenses;
 		}
 	});
-	context.subscriptions.push(hoverProvider, codeLensProvider);
+	// The hint for the active line survives the gap between a keystroke and the analysis that
+	// describes it. Without this the provider returned nothing for every stale version, so the
+	// details vanished and reappeared on each keystroke.
+	let lastHint: { document: vscode.TextDocument; line: number; hint: vscode.InlayHint } | undefined;
+	const inlayProvider = vscode.languages.registerInlayHintsProvider({ language: 'clemtoken' }, {
+		onDidChangeInlayHints: inlayHintsChanged.event,
+		provideInlayHints(document, range, token) {
+			if (!available || token.isCancellationRequested) return [];
+			const cursor = activeEditor?.document === document ? activeEditor.selection.active : undefined;
+			if (cursor === undefined || cursor.line >= document.lineCount
+				|| cursor.line < range.start.line || cursor.line > range.end.line) {
+				return [];
+			}
+			const model = current;
+			const stale = model === undefined || model.document !== document || model.version !== document.version;
+			if (stale) {
+				const cached = lastHint;
+				if (cached !== undefined && cached.document === document && cached.line === cursor.line
+					&& document.lineAt(cursor.line).text.trim() !== '') {
+					return [repositionHint(document, cursor.line, cached.hint)];
+				}
+				return [];
+			}
+			// Stats are structural, so the previous run is a better placeholder than dropping the
+			// rule facts for the whole stats debounce; the next run replaces them in place.
+			const grammar = statsDocument === document ? stats : undefined;
+			const hints = collectInlayHints(document, model.analysis, grammar, range, cursor, token);
+			lastHint = hints.length > 0 ? { document, line: cursor.line, hint: hints[0] } : undefined;
+			return hints;
+		}
+	});
+	context.subscriptions.push(hoverProvider, codeLensProvider, inlayProvider);
 
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
 	status.command = 'clemtoken.showGrammarStats';
@@ -471,7 +517,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			if (!editor || editor.document.languageId !== 'clemtoken') return;
 			await ensureModel(editor.document);
 			await ensureStats();
-			if (current === undefined || stats === undefined || current.version !== editor.document.version) {
+			if (current === undefined || stats === undefined || current.document !== editor.document || statsDocument !== editor.document || current.version !== editor.document.version) {
 				void vscode.window.showWarningMessage('ClemToken: no stats, the grammar has errors.');
 				return;
 			}
@@ -528,7 +574,10 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			apply(editor, document, analysis);
 			diagnostics.set(document.uri, collectDiagnostics(analysis));
 			current = { document, version, analysis };
+			completion = undefined;
 			codeLenses.fire();
+			inlayHintsChanged.fire();
+			updateActiveDecoration();
 		} catch (e) {
 			report(`Highlighting failed for ${document.uri.fsPath}: ${(e as Error).message}`);
 		}
@@ -556,7 +605,6 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 		definitions = analysis.definitions;
 		const known = new Set(definitions.map(entry => entry.name));
 		references = analysis.references.filter(entry => known.has(entry.name));
-		uncreated = analysis.references.filter(entry => !known.has(entry.name));
 	}
 
 	/** Make sure `current` reflects `document` at its latest version, flushing the pending highlight run. */
@@ -582,20 +630,25 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 			(result) => {
 				if (activeEditor?.document !== document || document.version !== version) return;
 				stats = result;
+				statsDocument = document;
 				statsVersion = version;
 			},
 			(error: Error) => {
 				if (activeEditor?.document !== document || document.version !== version) return;
 				stats = undefined;
+				statsDocument = document;
 				statsVersion = version;
 				report(`Grammar stats unavailable for ${document.uri.fsPath}: ${error.message}`);
 			},
 		).then(() => {
+			// a fresh stats run refines the rule details the completion table shows
+			completion = undefined;
 			updateStatusBar();
 			if (statsView.showing === 'grammar') {
 				refreshGrammarPanel();
 			}
 			codeLenses.fire();
+			inlayHintsChanged.fire();
 		}).catch((error: Error) => {
 			// the panel/status refresh threw; keep the extension host alive and record why
 			report(`Stats refresh failed: ${error.message}`);
@@ -606,7 +659,7 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 	async function ensureStats(): Promise<void> {
 		const editor = activeEditor;
 		if (!editor || editor.document.languageId !== 'clemtoken') return;
-		if (statsVersion === editor.document.version) return;
+		if (statsDocument === editor.document && statsVersion === editor.document.version) return;
 		if (statsTimer !== undefined) {
 			clearTimeout(statsTimer);
 			statsTimer = undefined;
@@ -616,14 +669,14 @@ function activateGrammar(context: vscode.ExtensionContext, engine: ClemTokenEngi
 
 	function refreshGrammarPanel(): void {
 		const model = current;
-		if (model === undefined || stats === undefined || statsVersion !== model.version) return;
+		if (model === undefined || stats === undefined || statsDocument !== model.document || statsVersion !== model.version) return;
 		statsView.showGrammar(fileName(model.document), GRAMMAR_HEADERS, grammarRows(model.analysis, stats), grammarFlame(model.analysis, stats));
 	}
 
 	function updateStatusBar(): void {
 		const editor = activeEditor;
 		const model = current;
-		if (!editor || editor.document.languageId !== 'clemtoken' || !available || stats === undefined || model === undefined || statsVersion !== model.version) {
+		if (!editor || editor.document.languageId !== 'clemtoken' || !available || stats === undefined || model === undefined || model.document !== editor.document || statsDocument !== model.document || statsVersion !== model.version) {
 			status.hide();
 			return;
 		}
